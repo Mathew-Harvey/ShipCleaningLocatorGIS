@@ -1,0 +1,45 @@
+# Logs
+logs/*.log
+
+# Dependency directories
+node_modules/
+
+# Client-side assets
+public/
+static/
+assets/
+dist/
+build/
+
+# Browser cache
+*.map
+*.hot-update.*
+*.js.map
+*.css.map
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.woff
+*.woff2
+*.ttf
+*.eot
+
+# Development files
+*.config.js
+*.env
+*.log
+.env.example
+
+# Editor configuration files
+.vscode/
+.idea/
+.vscode-server/
+.ideacache/
+.local/
+
+# Node.js specific
+*.js.map
+*.d.ts
