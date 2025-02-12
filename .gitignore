@@ -4,12 +4,6 @@ logs/*.log
 # Dependency directories
 node_modules/
 
-# Client-side assets
-public/
-static/
-assets/
-dist/
-build/
 
 # Browser cache
 *.map

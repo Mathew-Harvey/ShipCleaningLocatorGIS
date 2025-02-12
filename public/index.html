@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Hull Cleaning Constraints Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/node_modules/leaflet/dist/leaflet.css" />
+  <style>
+    html, body { 
+      margin: 0; 
+      padding: 0; 
+      height: 100%; 
+    }
+    #map { 
+      width: 100%; 
+      height: 100%; 
+    }
+    #sidebar {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      max-width: 350px;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .constraint-group {
+      margin-bottom: 15px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #eee;
+    }
+    .constraint-group h4 {
+      margin: 5px 0;
+      color: #333;
+    }
+    .layer-control {
+      margin: 5px 0;
+    }
+    .layer-control label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 0.9em;
+    }
+    .legend {
+      margin-top: 20px;
+      padding-top: 10px;
+      border-top: 2px solid #ccc;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      margin: 5px 0;
+      font-size: 0.85em;
+    }
+    .legend-color {
+      width: 20px;
+      height: 20px;
+      margin-right: 8px;
+      border: 1px solid #999;
+      border-radius: 3px;
+    }
+    .info-text {
+      font-size: 0.9em;
+      color: #666;
+      margin: 10px 0;
+      padding: 10px;
+      background: #f5f5f5;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="sidebar">
+    <h3>Hull Cleaning Constraints</h3>
+    <div class="info-text">
+      Areas where in-water hull cleaning activities may be restricted or prohibited.
+      Click on any area for detailed information.
+    </div>
+    
+    <div class="constraint-group">
+      <h4>Jurisdictional</h4>
+      <div class="layer-control">
+        <label>
+          <input type="checkbox" id="portAuthoritiesCheckbox" checked>
+          Port Authority Areas
+        </label>
+      </div>
+    </div>
+
+    <div class="constraint-group">
+      <h4>Environmental Protection</h4>
+      <div class="layer-control">
+        <label>
+          <input type="checkbox" id="marineParksCheckbox" checked>
+          Marine Parks & Reserves
+        </label>
+      </div>
+      <div class="layer-control">
+        <label>
+          <input type="checkbox" id="fishHabitatCheckbox" checked>
+          Fish Habitat Protection Areas
+        </label>
+      </div>
+      <div class="layer-control">
+        <label>
+          <input type="checkbox" id="cockburnSoundCheckbox" checked>
+          Cockburn Sound Protection Area
+        </label>
+      </div>
+    </div>
+
+    <div class="constraint-group">
+      <h4>Maritime Safety</h4>
+      <div class="layer-control">
+        <label>
+          <input type="checkbox" id="mooringAreasCheckbox" checked>
+          Mooring Control Areas
+        </label>
+      </div>
+      <div class="layer-control">
+        <label>
+          <input type="checkbox" id="shipChannelsCheckbox" checked>
+          Shipping Channels
+        </label>
+      </div>
+    </div>
+
+    <div class="constraint-group">
+      <h4>Infrastructure</h4>
+      <div class="layer-control">
+        <label>
+          <input type="checkbox" id="marineInfrastructureCheckbox" checked>
+          Marine Infrastructure
+        </label>
+      </div>
+    </div>
+
+    <div class="legend">
+      <h4>Legend</h4>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #FF4081"></div>
+        Port Authority Areas
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #4CAF50"></div>
+        Marine Parks & Reserves
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #FF9800"></div>
+        Fish Habitat Areas
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #2196F3"></div>
+        Cockburn Sound
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #9C27B0"></div>
+        Mooring Areas
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #F44336"></div>
+        Shipping Channels
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #795548"></div>
+        Marine Infrastructure
+      </div>
+    </div>
+  </div>
+
+  <script src="/node_modules/leaflet/dist/leaflet.js"></script>
+  
+  <script>
+    function initMap() {
+      const map = L.map('map').setView([-32.05, 115.73], 12);
+      
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(map);
+
+      const layers = {
+        portAuthorities: { 
+          url: '/api/portAuthorities', 
+          style: { color: '#FF4081', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+          layer: null 
+        },
+        marineParks: { 
+          url: '/api/marineParks', 
+          style: { color: '#4CAF50', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+          layer: null 
+        },
+        fishHabitat: { 
+          url: '/api/fishHabitat', 
+          style: { color: '#FF9800', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+          layer: null 
+        },
+        cockburnSound: { 
+          url: '/api/cockburnSound', 
+          style: { color: '#2196F3', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+          layer: null 
+        },
+        mooringAreas: { 
+          url: '/api/mooringAreas', 
+          style: { color: '#9C27B0', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+          layer: null 
+        },
+        shipChannels: { 
+          url: '/api/shipChannels', 
+          style: { color: '#F44336', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+          layer: null 
+        },
+        marineInfrastructure: { 
+          url: '/api/marineInfrastructure', 
+          style: { color: '#795548', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+          layer: null 
+        }
+      };
+
+      async function loadLayer(key) {
+        try {
+          const response = await fetch(layers[key].url);
+          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+          
+          const geojson = await response.json();
+          if (layers[key].layer) {
+            map.removeLayer(layers[key].layer);
+          }
+          
+          layers[key].layer = L.geoJSON(geojson, {
+            style: layers[key].style,
+            onEachFeature: (feature, layer) => {
+              if (feature.properties) {
+                const popupContent = Object.entries(feature.properties)
+                  .map(([key, value]) => `<strong>${key}:</strong> ${value}`)
+                  .join('<br>');
+                layer.bindPopup(popupContent);
+              }
+            }
+          }).addTo(map);
+          
+          return true;
+        } catch (error) {
+          console.error(`Error loading ${key} layer:`, error);
+          return false;
+        }
+      }
+
+      // Initialize all layers
+      Promise.all(Object.keys(layers).map(key => loadLayer(key)))
+        .then(() => {
+          // Add layer controls
+          Object.keys(layers).forEach(key => {
+            const checkboxId = `${key}Checkbox`;
+            const checkbox = document.getElementById(checkboxId);
+            if (checkbox) {
+              checkbox.addEventListener('change', function(e) {
+                if (layers[key].layer) {
+                  if (e.target.checked) map.addLayer(layers[key].layer);
+                  else map.removeLayer(layers[key].layer);
+                }
+              });
+            }
+          });
+
+          // Fit map to all loaded layers
+          const allLayers = Object.values(layers)
+            .map(l => l.layer)
+            .filter(l => l !== null);
+            
+          if (allLayers.length > 0) {
+            const group = L.featureGroup(allLayers);
+            map.fitBounds(group.getBounds(), { padding: [50, 50] });
+          }
+        });
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initMap);
+    } else {
+      initMap();
+    }
+  </script>
+</body>
+</html>
