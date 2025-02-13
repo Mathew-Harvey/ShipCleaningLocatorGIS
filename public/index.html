@@ -289,6 +289,7 @@
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
           const geojson = await response.json();
           layers[key].geojson = geojson;  // store for later spatial analysis
+          console.log(`${key} loaded with ${geojson.features.length} feature(s)`);
           if (layers[key].layer) {
             map.removeLayer(layers[key].layer);
           }
@@ -358,9 +359,10 @@
           setTimeout(() => {
             // Define restricted layers keys – only include layers that successfully loaded geoJSON
             const potentialRestrictedKeys = ['portAuthorities', 'marineParks', 'fishHabitat', 'cockburnSound'];
-            const restrictedKeys = potentialRestrictedKeys.filter(key => layers[key].geojson && layers[key].geojson.features);
+            const restrictedKeys = potentialRestrictedKeys.filter(key => layers[key].geojson && layers[key].geojson.features.length > 0);
             let featuresToUnion = [];
             restrictedKeys.forEach(key => {
+              console.log(`${key} has ${layers[key].geojson.features.length} feature(s)`);
               layers[key].geojson.features.forEach(feature => {
                 if (feature.geometry) {
                   // Ensure feature is a Polygon/MultiPolygon; if not, buffer it slightly
@@ -376,48 +378,47 @@
               });
             });
 
-            updateLoadingMessage("Crunching spatial data… please wait (up to 60 seconds)!");
-            // Perform the batched union
-            let unionRestricted = null;
-            if (featuresToUnion.length > 0) {
-              unionRestricted = batchUnion(featuresToUnion, 10);
-            }
-
-            // Define a study area (bounding box covering the region of interest)
-            const studyArea = turf.bboxPolygon([115.5, -32.2, 115.9, -31.8]);
-
-            // Compute the difference: areas within the study area that are NOT restricted
-            let recommendedZone = null;
-            if (unionRestricted) {
-              try {
-                recommendedZone = turf.difference(studyArea, unionRestricted);
-              } catch(e) {
-                console.error("Error computing difference:", e);
-              }
+            if(featuresToUnion.length === 0){
+              updateLoadingMessage("No restricted features found. Skipping cleaning zone calculation.");
             } else {
-              recommendedZone = studyArea;
-            }
+              updateLoadingMessage("Crunching spatial data… please wait (up to 60 seconds)!");
+              // Perform the batched union
+              let unionRestricted = batchUnion(featuresToUnion, 10);
 
-            // Add the Recommended Cleaning Zones layer if a result exists
-            if (recommendedZone) {
-              layers.recommendedZones = {
-                layer: L.geoJSON(recommendedZone, {
-                  style: { color: '#673AB7', weight: 3, opacity: 1, fillOpacity: 0.3 },
-                  onEachFeature: (feature, layer) => {
-                    layer.bindPopup("Potential Cleaning Zone. This area meets the criteria based on the current data.");
-                  }
-                })
-              };
-              const recommendedCheckbox = document.getElementById('recommendedZonesCheckbox');
-              if (recommendedCheckbox && recommendedCheckbox.checked) {
-                layers.recommendedZones.layer.addTo(map);
+              // Define a study area (bounding box covering the region of interest)
+              const studyArea = turf.bboxPolygon([115.5, -32.2, 115.9, -31.8]);
+
+              // Compute the difference: areas within the study area that are NOT restricted
+              let recommendedZone = null;
+              if (unionRestricted) {
+                try {
+                  recommendedZone = turf.difference(studyArea, unionRestricted);
+                } catch(e) {
+                  console.error("Error computing difference:", e);
+                }
               }
-              recommendedCheckbox.addEventListener('change', function(e) {
-                if (e.target.checked) map.addLayer(layers.recommendedZones.layer);
-                else map.removeLayer(layers.recommendedZones.layer);
-              });
+              // Only add the cleaning zones layer if a valid zone is computed and is not just the study area.
+              if (recommendedZone && !turf.booleanEqual(recommendedZone, studyArea)) {
+                layers.recommendedZones = {
+                  layer: L.geoJSON(recommendedZone, {
+                    style: { color: '#673AB7', weight: 3, opacity: 1, fillOpacity: 0.15 },
+                    onEachFeature: (feature, layer) => {
+                      layer.bindPopup("Potential Cleaning Zone. This area meets the criteria based on the current data.");
+                    }
+                  })
+                };
+                const recommendedCheckbox = document.getElementById('recommendedZonesCheckbox');
+                if (recommendedCheckbox && recommendedCheckbox.checked) {
+                  layers.recommendedZones.layer.addTo(map);
+                }
+                recommendedCheckbox.addEventListener('change', function(e) {
+                  if (e.target.checked) map.addLayer(layers.recommendedZones.layer);
+                  else map.removeLayer(layers.recommendedZones.layer);
+                });
+              } else {
+                updateLoadingMessage("No valid cleaning zones computed from restricted data.");
+              }
             }
-
             // Fit map bounds to all loaded layers
             const allLayers = Object.values(layers)
               .filter(l => l.layer)
