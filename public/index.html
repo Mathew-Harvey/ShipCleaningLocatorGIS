@@ -4,13 +4,17 @@
   <meta charset="utf-8" />
   <title>Hull Cleaning Constraints Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Leaflet CSS -->
   <link rel="stylesheet" href="/node_modules/leaflet/dist/leaflet.css" />
+  <!-- Turf.js for spatial analysis -->
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
   <style>
     html, body { 
       margin: 0; 
       padding: 0; 
       height: 100%; 
     }
+    /* Ensure the map and sidebar are visible from the start */
     #map { 
       width: 100%; 
       height: 100%; 
@@ -73,15 +77,60 @@
       background: #f5f5f5;
       border-radius: 4px;
     }
+    /* Loading overlay styles: overlay sits on top of map */
+    #loadingOverlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(255,255,255,0.95);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 3000;
+      font-family: sans-serif;
+      text-align: center;
+      padding: 20px;
+    }
+    .spinner {
+      border: 8px solid #f3f3f3;
+      border-top: 8px solid #673AB7;
+      border-radius: 50%;
+      width: 60px;
+      height: 60px;
+      animation: spin 1s linear infinite;
+      margin-bottom: 20px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    #loadingMessage {
+      font-size: 1.1em;
+      color: #333;
+    }
   </style>
 </head>
 <body>
+  <!-- Loading overlay sits atop the map -->
+  <div id="loadingOverlay">
+    <div class="spinner"></div>
+    <div id="loadingMessage">Warming up the marine engines…</div>
+  </div>
+  
   <div id="map"></div>
   <div id="sidebar">
     <h3>Hull Cleaning Constraints</h3>
     <div class="info-text">
-      Areas where in-water hull cleaning activities may be restricted or prohibited.
-      Click on any area for detailed information.
+      To select potential cleaning sites, ensure the location:
+      <ul>
+        <li>Is outside Fremantle Port limits</li>
+        <li>Has minimal proximity to sensitive receptors (marine parks, fish habitat, Cockburn Sound protection, etc.)</li>
+        <li>Offers sufficient water flow for safe dispersion of residuals</li>
+      </ul>
+      Areas shown in the "Potential Cleaning Zones" layer represent parts of the study area that do not intersect with restricted zones.
     </div>
     
     <div class="constraint-group">
@@ -99,7 +148,7 @@
       <div class="layer-control">
         <label>
           <input type="checkbox" id="marineParksCheckbox" checked>
-          Marine Parks & Reserves
+          Marine Parks &amp; Reserves
         </label>
       </div>
       <div class="layer-control">
@@ -117,7 +166,7 @@
     </div>
 
     <div class="constraint-group">
-      <h4>Maritime Safety</h4>
+      <h4>Infrastructure</h4>
       <div class="layer-control">
         <label>
           <input type="checkbox" id="mooringAreasCheckbox" checked>
@@ -126,18 +175,18 @@
       </div>
       <div class="layer-control">
         <label>
-          <input type="checkbox" id="shipChannelsCheckbox" checked>
-          Shipping Channels
+          <input type="checkbox" id="marineInfrastructureCheckbox" checked>
+          Marine Infrastructure
         </label>
       </div>
     </div>
 
     <div class="constraint-group">
-      <h4>Infrastructure</h4>
+      <h4>Recommended Cleaning Zones</h4>
       <div class="layer-control">
         <label>
-          <input type="checkbox" id="marineInfrastructureCheckbox" checked>
-          Marine Infrastructure
+          <input type="checkbox" id="recommendedZonesCheckbox" checked>
+          Potential Cleaning Zones
         </label>
       </div>
     </div>
@@ -150,7 +199,7 @@
       </div>
       <div class="legend-item">
         <div class="legend-color" style="background: #4CAF50"></div>
-        Marine Parks & Reserves
+        Marine Parks &amp; Reserves
       </div>
       <div class="legend-item">
         <div class="legend-color" style="background: #FF9800"></div>
@@ -165,86 +214,95 @@
         Mooring Areas
       </div>
       <div class="legend-item">
-        <div class="legend-color" style="background: #F44336"></div>
-        Shipping Channels
-      </div>
-      <div class="legend-item">
         <div class="legend-color" style="background: #795548"></div>
         Marine Infrastructure
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #673AB7"></div>
+        Potential Cleaning Zones
       </div>
     </div>
   </div>
 
+  <!-- Leaflet JS -->
   <script src="/node_modules/leaflet/dist/leaflet.js"></script>
-  
   <script>
     function initMap() {
+      // Create map centered over Fremantle
       const map = L.map('map').setView([-32.05, 115.73], 12);
       
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors'
       }).addTo(map);
 
+      // Define layers with endpoints and styles
       const layers = {
         portAuthorities: { 
           url: '/api/portAuthorities', 
           style: { color: '#FF4081', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-          layer: null 
+          layer: null,
+          geojson: null
         },
         marineParks: { 
           url: '/api/marineParks', 
           style: { color: '#4CAF50', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-          layer: null 
+          layer: null,
+          geojson: null
         },
         fishHabitat: { 
           url: '/api/fishHabitat', 
           style: { color: '#FF9800', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-          layer: null 
+          layer: null,
+          geojson: null
         },
         cockburnSound: { 
           url: '/api/cockburnSound', 
           style: { color: '#2196F3', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-          layer: null 
+          layer: null,
+          geojson: null
         },
         mooringAreas: { 
           url: '/api/mooringAreas', 
           style: { color: '#9C27B0', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-          layer: null 
-        },
-        shipChannels: { 
-          url: '/api/shipChannels', 
-          style: { color: '#F44336', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-          layer: null 
+          layer: null
         },
         marineInfrastructure: { 
           url: '/api/marineInfrastructure', 
           style: { color: '#795548', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-          layer: null 
+          layer: null
         }
       };
 
+      // Function to update the loading message
+      function updateLoadingMessage(message) {
+        const loadingMsg = document.getElementById('loadingMessage');
+        if (loadingMsg) {
+          loadingMsg.innerText = message;
+        }
+      }
+
+      // Function to load a layer and store its GeoJSON data
       async function loadLayer(key) {
         try {
+          updateLoadingMessage(`Fetching ${key.replace(/([A-Z])/g, ' $1')}…`);
           const response = await fetch(layers[key].url);
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-          
           const geojson = await response.json();
+          layers[key].geojson = geojson;  // store for later spatial analysis
           if (layers[key].layer) {
             map.removeLayer(layers[key].layer);
           }
-          
           layers[key].layer = L.geoJSON(geojson, {
             style: layers[key].style,
             onEachFeature: (feature, layer) => {
               if (feature.properties) {
                 const popupContent = Object.entries(feature.properties)
-                  .map(([key, value]) => `<strong>${key}:</strong> ${value}`)
+                  .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
                   .join('<br>');
                 layer.bindPopup(popupContent);
               }
             }
           }).addTo(map);
-          
           return true;
         } catch (error) {
           console.error(`Error loading ${key} layer:`, error);
@@ -252,32 +310,130 @@
         }
       }
 
-      // Initialize all layers
+      // Batch union helper: unions features in groups to reduce processing load.
+      function batchUnion(features, batchSize = 10) {
+        const unionAll = (featureArray) => {
+          return featureArray.reduce((acc, feature) => {
+            if (!acc) return feature;
+            try {
+              return turf.union(acc, feature);
+            } catch(e) {
+              console.error("Error during union:", e);
+              return acc;
+            }
+          }, null);
+        };
+
+        let batched = [];
+        for (let i = 0; i < features.length; i += batchSize) {
+          const batch = features.slice(i, i + batchSize);
+          const batchUnioned = unionAll(batch);
+          if (batchUnioned) {
+            batched.push(batchUnioned);
+          }
+        }
+        return unionAll(batched);
+      }
+
+      // Load all layers and then compute the recommended cleaning zones
       Promise.all(Object.keys(layers).map(key => loadLayer(key)))
         .then(() => {
-          // Add layer controls
+          updateLoadingMessage("All layers fetched – crunching spatial data. This may take up to 60 seconds…");
+          // Attach checkbox listeners for individual layers
           Object.keys(layers).forEach(key => {
             const checkboxId = `${key}Checkbox`;
             const checkbox = document.getElementById(checkboxId);
-            if (checkbox) {
+            if (checkbox && layers[key].layer) {
               checkbox.addEventListener('change', function(e) {
-                if (layers[key].layer) {
-                  if (e.target.checked) map.addLayer(layers[key].layer);
-                  else map.removeLayer(layers[key].layer);
+                if (e.target.checked) {
+                  map.addLayer(layers[key].layer);
+                } else {
+                  map.removeLayer(layers[key].layer);
                 }
               });
             }
           });
 
-          // Fit map to all loaded layers
-          const allLayers = Object.values(layers)
-            .map(l => l.layer)
-            .filter(l => l !== null);
+          // Use a setTimeout to yield to the UI before starting heavy union operations
+          setTimeout(() => {
+            // Define restricted layers keys – only include layers that successfully loaded geoJSON
+            const potentialRestrictedKeys = ['portAuthorities', 'marineParks', 'fishHabitat', 'cockburnSound'];
+            const restrictedKeys = potentialRestrictedKeys.filter(key => layers[key].geojson && layers[key].geojson.features);
+            let featuresToUnion = [];
+            restrictedKeys.forEach(key => {
+              layers[key].geojson.features.forEach(feature => {
+                if (feature.geometry) {
+                  // Ensure feature is a Polygon/MultiPolygon; if not, buffer it slightly
+                  if (feature.geometry.type !== 'Polygon' && feature.geometry.type !== 'MultiPolygon') {
+                    try {
+                      feature = turf.buffer(feature, 0.1, { units: 'kilometers' });
+                    } catch(e) {
+                      console.error('Buffer error:', e);
+                    }
+                  }
+                  featuresToUnion.push(feature);
+                }
+              });
+            });
+
+            updateLoadingMessage("Crunching spatial data… please wait (up to 60 seconds)!");
+            // Perform the batched union
+            let unionRestricted = null;
+            if (featuresToUnion.length > 0) {
+              unionRestricted = batchUnion(featuresToUnion, 10);
+            }
+
+            // Define a study area (bounding box covering the region of interest)
+            const studyArea = turf.bboxPolygon([115.5, -32.2, 115.9, -31.8]);
+
+            // Compute the difference: areas within the study area that are NOT restricted
+            let recommendedZone = null;
+            if (unionRestricted) {
+              try {
+                recommendedZone = turf.difference(studyArea, unionRestricted);
+              } catch(e) {
+                console.error("Error computing difference:", e);
+              }
+            } else {
+              recommendedZone = studyArea;
+            }
+
+            // Add the Recommended Cleaning Zones layer if a result exists
+            if (recommendedZone) {
+              layers.recommendedZones = {
+                layer: L.geoJSON(recommendedZone, {
+                  style: { color: '#673AB7', weight: 3, opacity: 1, fillOpacity: 0.3 },
+                  onEachFeature: (feature, layer) => {
+                    layer.bindPopup("Potential Cleaning Zone. This area meets the criteria based on the current data.");
+                  }
+                })
+              };
+              const recommendedCheckbox = document.getElementById('recommendedZonesCheckbox');
+              if (recommendedCheckbox && recommendedCheckbox.checked) {
+                layers.recommendedZones.layer.addTo(map);
+              }
+              recommendedCheckbox.addEventListener('change', function(e) {
+                if (e.target.checked) map.addLayer(layers.recommendedZones.layer);
+                else map.removeLayer(layers.recommendedZones.layer);
+              });
+            }
+
+            // Fit map bounds to all loaded layers
+            const allLayers = Object.values(layers)
+              .filter(l => l.layer)
+              .map(l => l.layer);
+            if (allLayers.length > 0) {
+              const group = L.featureGroup(allLayers);
+              map.fitBounds(group.getBounds(), { padding: [50, 50] });
+            }
+            // Force the map to center over Fremantle for user clarity.
+            map.setView([-32.05, 115.73], 12);
+            // Delay invalidateSize to ensure proper rendering
+            setTimeout(() => { map.invalidateSize(); }, 200);
             
-          if (allLayers.length > 0) {
-            const group = L.featureGroup(allLayers);
-            map.fitBounds(group.getBounds(), { padding: [50, 50] });
-          }
+            // All done – remove loading overlay.
+            document.getElementById('loadingOverlay').remove();
+          }, 0);
         });
     }
 
