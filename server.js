@@ -28,11 +28,9 @@ class APIExplorer {
           ...options,
           timeout: 5000
         });
-        
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
-        
         return response;
       } catch (err) {
         retries++;
@@ -58,30 +56,23 @@ class APIExplorer {
   }
 
   isValidGeoJSON(data) {
-    return data && 
-           data.type === "FeatureCollection" && 
+    return data &&
+           data.type === "FeatureCollection" &&
            Array.isArray(data.features);
   }
 }
 
-// Define endpoints for various constraints
+// Publicly available endpoints (excluding shipChannels due to errors)
 const ENDPOINTS = {
   portAuthorities: "https://public-services.slip.wa.gov.au/public/rest/services/SLIP_Public_Services/Boundaries/MapServer/12/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
-  
   marineParks: "https://services.slip.wa.gov.au/public/rest/services/Landgate_Public_Maps/Marine_Map_WA_3/MapServer/2/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
-  
   fishHabitat: "https://services.slip.wa.gov.au/public/rest/services/Landgate_Public_Maps/Marine_Map_WA_3/MapServer/4/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
-  
   cockburnSound: "https://services.slip.wa.gov.au/public/rest/services/Landgate_Public_Maps/Marine_Map_WA_3/MapServer/12/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
-  
   mooringAreas: "https://services.slip.wa.gov.au/public/rest/services/Landgate_Public_Maps/Marine_Map_WA_3/MapServer/15/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
-  
-  shipChannels: "https://services.slip.wa.gov.au/public/rest/services/Landgate_Public_Maps/Marine_Map_WA_3/MapServer/16/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
-  
   marineInfrastructure: "https://services.slip.wa.gov.au/public/rest/services/Landgate_Public_Maps/Marine_Map_WA_3/MapServer/18/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson"
 };
 
-// Create API endpoints for each constraint
+// Create API endpoints for each documented service
 Object.entries(ENDPOINTS).forEach(([key, url]) => {
   app.get(`/api/${key}`, async (req, res) => {
     try {
