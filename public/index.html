@@ -231,11 +231,13 @@
       // Create map centered over Fremantle
       const map = L.map('map').setView([-32.05, 115.73], 12);
       
-      // Use OpenSeaMap nautical tiles as the base layer
-      L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+      // Use OpenSeaMap nautical chart tiles as the base layer.
+      // Note: The "chart" layer provides a complete nautical background.
+      const nauticalBase = L.tileLayer('https://tiles.openseamap.org/chart/{z}/{x}/{y}.png', {
         maxZoom: 18,
-        attribution: 'Map data: © <a href="https://www.openstreetmap.org">OpenStreetMap</a> contributors, <a href="https://openseamap.org">OpenSeaMap</a>'
-      }).addTo(map);
+        attribution: 'Map data: © <a href="https://www.openstreetmap.org">OSM</a> contributors, <a href="https://openseamap.org">OpenSeaMap</a>'
+      });
+      nauticalBase.addTo(map);
 
       // Update API endpoints to point to your deployed server
       const baseURL = "https://shipcleaninggis-server.onrender.com";
