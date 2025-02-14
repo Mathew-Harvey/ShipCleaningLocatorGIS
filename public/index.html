@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>Hull Cleaning Constraints Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- Use CDN for Leaflet CSS (integrity attributes removed) -->
+  <!-- Use CDN for Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" crossorigin=""/>
   <!-- Turf.js for spatial analysis -->
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
@@ -77,7 +77,7 @@
       background: #f5f5f5;
       border-radius: 4px;
     }
-    /* Loading overlay styles: overlay sits on top of map */
+    /* Loading overlay styles */
     #loadingOverlay {
       position: fixed;
       top: 0;
@@ -235,39 +235,40 @@
         attribution: '© OpenStreetMap contributors'
       }).addTo(map);
 
-      // Define layers with endpoints and styles
+      // Update API endpoints to point to your deployed server
+      const baseURL = "https://shipcleaninggis-server.onrender.com";
       const layers = {
         portAuthorities: { 
-          url: '/api/portAuthorities', 
+          url: baseURL + '/api/portAuthorities', 
           style: { color: '#FF4081', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
           layer: null,
           geojson: null
         },
         marineParks: { 
-          url: '/api/marineParks', 
+          url: baseURL + '/api/marineParks', 
           style: { color: '#4CAF50', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
           layer: null,
           geojson: null
         },
         fishHabitat: { 
-          url: '/api/fishHabitat', 
+          url: baseURL + '/api/fishHabitat', 
           style: { color: '#FF9800', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
           layer: null,
           geojson: null
         },
         cockburnSound: { 
-          url: '/api/cockburnSound', 
+          url: baseURL + '/api/cockburnSound', 
           style: { color: '#2196F3', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
           layer: null,
           geojson: null
         },
         mooringAreas: { 
-          url: '/api/mooringAreas', 
+          url: baseURL + '/api/mooringAreas', 
           style: { color: '#9C27B0', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
           layer: null
         },
         marineInfrastructure: { 
-          url: '/api/marineInfrastructure', 
+          url: baseURL + '/api/marineInfrastructure', 
           style: { color: '#795548', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
           layer: null
         }
@@ -396,12 +397,15 @@
                 } catch(e) {
                   console.error("Error computing difference:", e);
                 }
+              } else {
+                recommendedZone = studyArea;
               }
-              // Only add the cleaning zones layer if a valid zone is computed and is not just the study area.
-              if (recommendedZone && !turf.booleanEqual(recommendedZone, studyArea)) {
+
+              // Add the Recommended Cleaning Zones layer if a result exists
+              if (recommendedZone) {
                 layers.recommendedZones = {
                   layer: L.geoJSON(recommendedZone, {
-                    style: { color: '#673AB7', weight: 3, opacity: 1, fillOpacity: 0.15 },
+                    style: { color: '#673AB7', weight: 3, opacity: 1, fillOpacity: 0.3 },
                     onEachFeature: (feature, layer) => {
                       layer.bindPopup("Potential Cleaning Zone. This area meets the criteria based on the current data.");
                     }
@@ -415,8 +419,6 @@
                   if (e.target.checked) map.addLayer(layers.recommendedZones.layer);
                   else map.removeLayer(layers.recommendedZones.layer);
                 });
-              } else {
-                updateLoadingMessage("No valid cleaning zones computed from restricted data.");
               }
             }
             // Fit map bounds to all loaded layers
