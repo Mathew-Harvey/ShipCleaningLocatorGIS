@@ -320,11 +320,10 @@
       });
 
       // --- Nautical Overlays from OpenSeaMap ---
-      // Update the Sea Marks overlay URL to use the correct domain.
+      // Use a fixed domain (without {s}) for the Sea Marks overlay.
       const nauticalOverlays = {
         seaMarks: {
-          layer: L.tileLayer('https://{s}.map.openseamap.org/seamark/{z}/{x}/{y}.png', {
-            subdomains: ['a','b','c'],
+          layer: L.tileLayer('https://map.openseamap.org/seamark/{z}/{x}/{y}.png', {
             maxZoom: 18,
             opacity: 1,
             attribution: 'Sea Marks © OpenSeaMap'
