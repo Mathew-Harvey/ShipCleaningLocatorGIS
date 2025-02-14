@@ -224,25 +224,26 @@
     </div>
   </div>
 
-  <!-- Use CDN for Leaflet JS (integrity attributes removed) -->
+  <!-- Use CDN for Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js" crossorigin=""></script>
   <script>
     function initMap() {
       // Create map centered over Fremantle
       const map = L.map('map').setView([-32.05, 115.73], 12);
       
-      // Use a standard OSM base layer for background details.
+      // Use a standard OSM base layer for full background (land, water, bathymetry, etc.)
       const baseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 18,
         attribution: '© OpenStreetMap contributors'
       });
       baseLayer.addTo(map);
       
-      // Add OpenSeaMap seamark overlay for nautical markers.
+      // Add OpenSeaMap seamark overlay with explicit z-index and full opacity
       const seamarkOverlay = L.tileLayer('https://{s}.tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
         subdomains: ['a','b','c'],
         maxZoom: 18,
-        opacity: 0.8,
+        opacity: 1,
+        zIndex: 650,
         attribution: '© OpenSeaMap'
       });
       seamarkOverlay.addTo(map);
