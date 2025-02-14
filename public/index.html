@@ -133,7 +133,7 @@
       Areas shown in the "Potential Cleaning Zones" layer represent parts of the study area that do not intersect with restricted zones.
     </div>
     
-    <!-- Existing layers for government data -->
+    <!-- Existing government data layers -->
     <div class="constraint-group">
       <h4>Jurisdictional</h4>
       <div class="layer-control">
@@ -188,39 +188,41 @@
         </label>
       </div>
     </div>
-    <!-- New Nautical Overlays -->
+    <!-- Nautical overlay checkbox for Sea Marks only -->
     <div class="constraint-group">
-      <h4>Nautical Overlays</h4>
+      <h4>Nautical Overlay</h4>
       <div class="layer-control">
         <label>
           <input type="checkbox" id="seaMarksCheckbox" checked>
           Sea Marks
         </label>
       </div>
+      <!-- Uncomment these only if you later have valid endpoints:
       <div class="layer-control">
         <label>
-          <input type="checkbox" id="harboursCheckbox" checked>
+          <input type="checkbox" id="harboursCheckbox">
           Harbours
         </label>
       </div>
       <div class="layer-control">
         <label>
-          <input type="checkbox" id="marineProfileCheckbox" checked>
+          <input type="checkbox" id="marineProfileCheckbox">
           Marine Profile
         </label>
       </div>
       <div class="layer-control">
         <label>
-          <input type="checkbox" id="compassRoseCheckbox" checked>
+          <input type="checkbox" id="compassRoseCheckbox">
           Compass Rose
         </label>
       </div>
       <div class="layer-control">
         <label>
-          <input type="checkbox" id="waterDepthCheckbox" checked>
+          <input type="checkbox" id="waterDepthCheckbox">
           Water Depth
         </label>
       </div>
+      -->
     </div>
     <div class="legend">
       <h4>Legend</h4>
@@ -251,6 +253,10 @@
       <div class="legend-item">
         <div class="legend-color" style="background: #673AB7"></div>
         Potential Cleaning Zones
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #000"></div>
+        Sea Marks (Nautical Overlay)
       </div>
     </div>
   </div>
@@ -340,6 +346,7 @@
       });
 
       // --- Nautical Overlays from OpenSeaMap ---
+      // Only Sea Marks overlay is enabled because the other endpoints currently do not resolve.
       const nauticalOverlays = {
         seaMarks: {
           layer: L.tileLayer('https://{s}.tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
@@ -349,7 +356,9 @@
             attribution: 'Sea Marks © OpenSeaMap'
           }),
           checkboxId: 'seaMarksCheckbox'
-        },
+        }
+        // If you later obtain valid endpoints for the following, add them back:
+        /*
         harbours: {
           layer: L.tileLayer('https://{s}.tiles.openseamap.org/harbour/{z}/{x}/{y}.png', {
             subdomains: ['a','b','c'],
@@ -386,9 +395,10 @@
           }),
           checkboxId: 'waterDepthCheckbox'
         }
+        */
       };
 
-      // Add nautical overlays to map and attach checkbox event listeners
+      // Add nautical overlays and attach event listeners
       Object.keys(nauticalOverlays).forEach(key => {
         const overlay = nauticalOverlays[key];
         const checkbox = document.getElementById(overlay.checkboxId);
@@ -406,9 +416,7 @@
         }
       });
 
-      // (Existing code for recommended cleaning zones and spatial processing remains unchanged)
-      // For brevity, we assume that section remains below...
-      
+      // (Existing code for recommended cleaning zones and spatial processing remains unchanged.)
       // Fit bounds after a short delay to ensure layers are rendered
       setTimeout(() => { map.invalidateSize(); }, 200);
       
