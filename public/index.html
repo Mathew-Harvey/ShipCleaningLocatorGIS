@@ -231,8 +231,10 @@
       // Create map centered over Fremantle
       const map = L.map('map').setView([-32.05, 115.73], 12);
       
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
+      // Use OpenSeaMap nautical tiles as the base layer
+      L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: 'Map data: © <a href="https://www.openstreetmap.org">OpenStreetMap</a> contributors, <a href="https://openseamap.org">OpenSeaMap</a>'
       }).addTo(map);
 
       // Update API endpoints to point to your deployed server
