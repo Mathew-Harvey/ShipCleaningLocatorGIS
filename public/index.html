@@ -133,7 +133,7 @@
       Areas shown in the "Potential Cleaning Zones" layer represent parts of the study area that do not intersect with restricted zones.
     </div>
     
-    <!-- Government data layers -->
+    <!-- Government Data Layers -->
     <div class="constraint-group">
       <h4>Jurisdictional</h4>
       <div class="layer-control">
@@ -238,7 +238,26 @@
   <!-- Use CDN for Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js" crossorigin=""></script>
   <script>
-    function initMap() {
+    // Helper function to detect a working tile URL from candidate templates.
+    async function detectSeamarkUrl(candidates) {
+      // Use a test tile coordinate (adjust these values as needed)
+      const testZ = '12', testX = '3366', testY = '2435';
+      for (let candidate of candidates) {
+        const testUrl = candidate.replace('{z}', testZ).replace('{x}', testX).replace('{y}', testY);
+        try {
+          const response = await fetch(testUrl, { method: 'HEAD' });
+          if (response.ok) {
+            console.log('Found valid seamark URL:', candidate);
+            return candidate;
+          }
+        } catch (err) {
+          console.warn('Candidate failed:', candidate, err);
+        }
+      }
+      throw new Error('No valid seamark URL found.');
+    }
+
+    async function initMap() {
       // Create map centered over Fremantle
       const map = L.map('map').setView([-32.05, 115.73], 12);
       
@@ -255,26 +274,22 @@
         portAuthorities: { 
           url: baseURL + '/api/portAuthorities', 
           style: { color: '#FF4081', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-          layer: null,
-          geojson: null
+          layer: null
         },
         marineParks: { 
           url: baseURL + '/api/marineParks', 
           style: { color: '#4CAF50', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-          layer: null,
-          geojson: null
+          layer: null
         },
         fishHabitat: { 
           url: baseURL + '/api/fishHabitat', 
           style: { color: '#FF9800', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-          layer: null,
-          geojson: null
+          layer: null
         },
         cockburnSound: { 
           url: baseURL + '/api/cockburnSound', 
           style: { color: '#2196F3', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-          layer: null,
-          geojson: null
+          layer: null
         },
         mooringAreas: { 
           url: baseURL + '/api/mooringAreas', 
@@ -293,7 +308,6 @@
         fetch(govLayers[key].url)
           .then(response => response.json())
           .then(geojson => {
-            govLayers[key].geojson = geojson;
             govLayers[key].layer = L.geoJSON(geojson, {
               style: govLayers[key].style,
               onEachFeature: (feature, layer) => {
@@ -319,36 +333,36 @@
           .catch(err => console.error(`Error loading ${key}:`, err));
       });
 
-      // --- Nautical Overlays from OpenSeaMap ---
-      // Use a fixed domain (without {s}) for the Sea Marks overlay.
-      const nauticalOverlays = {
-        seaMarks: {
-          layer: L.tileLayer('https://map.openseamap.org/seamark/{z}/{x}/{y}.png', {
-            maxZoom: 18,
-            opacity: 1,
-            attribution: 'Sea Marks © OpenSeaMap'
-          }),
-          checkboxId: 'seaMarksCheckbox'
-        }
-      };
+      // --- Nautical Overlay for Sea Marks ---
+      // Candidate URL templates for the seamark overlay.
+      const candidateUrls = [
+        "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",
+        "https://map.openseamap.org/seamark/{z}/{x}/{y}.png",
+        "https://c.map.openseamap.org/seamark/{z}/{x}/{y}.png"
+      ];
 
-      // Add nautical overlays and attach event listeners
-      Object.keys(nauticalOverlays).forEach(key => {
-        const overlay = nauticalOverlays[key];
-        const checkbox = document.getElementById(overlay.checkboxId);
-        if (checkbox && checkbox.checked) {
-          overlay.layer.addTo(map);
+      try {
+        const validSeamarkUrl = await detectSeamarkUrl(candidateUrls);
+        const seaMarksLayer = L.tileLayer(validSeamarkUrl, {
+          maxZoom: 18,
+          opacity: 1,
+          attribution: 'Sea Marks © OpenSeaMap'
+        });
+        // Add to map if checkbox is checked
+        const seaMarksCheckbox = document.getElementById('seaMarksCheckbox');
+        if (seaMarksCheckbox && seaMarksCheckbox.checked) {
+          seaMarksLayer.addTo(map);
         }
-        if (checkbox) {
-          checkbox.addEventListener('change', function(e) {
-            if (e.target.checked) {
-              overlay.layer.addTo(map);
-            } else {
-              map.removeLayer(overlay.layer);
-            }
-          });
-        }
-      });
+        seaMarksCheckbox.addEventListener('change', function(e) {
+          if (e.target.checked) {
+            seaMarksLayer.addTo(map);
+          } else {
+            map.removeLayer(seaMarksLayer);
+          }
+        });
+      } catch (err) {
+        console.error(err);
+      }
 
       // Fit bounds after a short delay to ensure layers are rendered
       setTimeout(() => { map.invalidateSize(); }, 200);
