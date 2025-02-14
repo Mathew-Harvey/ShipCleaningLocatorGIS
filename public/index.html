@@ -133,7 +133,7 @@
       Areas shown in the "Potential Cleaning Zones" layer represent parts of the study area that do not intersect with restricted zones.
     </div>
     
-    <!-- Existing government data layers -->
+    <!-- Government data layers -->
     <div class="constraint-group">
       <h4>Jurisdictional</h4>
       <div class="layer-control">
@@ -188,7 +188,7 @@
         </label>
       </div>
     </div>
-    <!-- Nautical overlay checkbox for Sea Marks only -->
+    <!-- Nautical Overlay for Sea Marks -->
     <div class="constraint-group">
       <h4>Nautical Overlay</h4>
       <div class="layer-control">
@@ -197,32 +197,6 @@
           Sea Marks
         </label>
       </div>
-      <!-- Uncomment these only if you later have valid endpoints:
-      <div class="layer-control">
-        <label>
-          <input type="checkbox" id="harboursCheckbox">
-          Harbours
-        </label>
-      </div>
-      <div class="layer-control">
-        <label>
-          <input type="checkbox" id="marineProfileCheckbox">
-          Marine Profile
-        </label>
-      </div>
-      <div class="layer-control">
-        <label>
-          <input type="checkbox" id="compassRoseCheckbox">
-          Compass Rose
-        </label>
-      </div>
-      <div class="layer-control">
-        <label>
-          <input type="checkbox" id="waterDepthCheckbox">
-          Water Depth
-        </label>
-      </div>
-      -->
     </div>
     <div class="legend">
       <h4>Legend</h4>
@@ -346,10 +320,10 @@
       });
 
       // --- Nautical Overlays from OpenSeaMap ---
-      // Only Sea Marks overlay is enabled because the other endpoints currently do not resolve.
+      // Update the Sea Marks overlay URL to use the correct domain.
       const nauticalOverlays = {
         seaMarks: {
-          layer: L.tileLayer('https://{s}.tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+          layer: L.tileLayer('https://{s}.map.openseamap.org/seamark/{z}/{x}/{y}.png', {
             subdomains: ['a','b','c'],
             maxZoom: 18,
             opacity: 1,
@@ -357,45 +331,6 @@
           }),
           checkboxId: 'seaMarksCheckbox'
         }
-        // If you later obtain valid endpoints for the following, add them back:
-        /*
-        harbours: {
-          layer: L.tileLayer('https://{s}.tiles.openseamap.org/harbour/{z}/{x}/{y}.png', {
-            subdomains: ['a','b','c'],
-            maxZoom: 18,
-            opacity: 1,
-            attribution: 'Harbours © OpenSeaMap'
-          }),
-          checkboxId: 'harboursCheckbox'
-        },
-        marineProfile: {
-          layer: L.tileLayer('https://{s}.tiles.openseamap.org/marineprofile/{z}/{x}/{y}.png', {
-            subdomains: ['a','b','c'],
-            maxZoom: 18,
-            opacity: 1,
-            attribution: 'Marine Profile © OpenSeaMap'
-          }),
-          checkboxId: 'marineProfileCheckbox'
-        },
-        compassRose: {
-          layer: L.tileLayer('https://{s}.tiles.openseamap.org/compass/{z}/{x}/{y}.png', {
-            subdomains: ['a','b','c'],
-            maxZoom: 18,
-            opacity: 1,
-            attribution: 'Compass Rose © OpenSeaMap'
-          }),
-          checkboxId: 'compassRoseCheckbox'
-        },
-        waterDepth: {
-          layer: L.tileLayer('https://{s}.tiles.openseamap.org/depth/{z}/{x}/{y}.png', {
-            subdomains: ['a','b','c'],
-            maxZoom: 18,
-            opacity: 1,
-            attribution: 'Water Depth © OpenSeaMap'
-          }),
-          checkboxId: 'waterDepthCheckbox'
-        }
-        */
       };
 
       // Add nautical overlays and attach event listeners
@@ -416,7 +351,6 @@
         }
       });
 
-      // (Existing code for recommended cleaning zones and spatial processing remains unchanged.)
       // Fit bounds after a short delay to ensure layers are rendered
       setTimeout(() => { map.invalidateSize(); }, 200);
       
