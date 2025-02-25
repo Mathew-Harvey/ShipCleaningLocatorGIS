@@ -430,1183 +430,1224 @@
   <!-- Use CDN for Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js" crossorigin=""></script>
   <script>
-    // ===== CONFIGURATION FOR DEPLOYMENT =====
-    // API configuration with real server URL
-    const API_CONFIG = {
-      // For local development:
-      local: 'http://localhost:3000',
-      
-      // For production deployment (your deployed server):
-      production: 'https://shipcleaninggis-server.onrender.com', 
-      
-      // Fallback mode - set to false to use the real API
-      mockMode: false
-    };
+// ===== CONFIGURATION FOR DEPLOYMENT =====
+// API configuration with real server URL
+const API_CONFIG = {
+  // For local development:
+  local: 'http://localhost:3000',
+  
+  // For production deployment (your deployed server):
+  production: 'https://shipcleaninggis-server.onrender.com', 
+  
+  // Fallback mode - set to false to use the real API
+  mockMode: false
+};
 
-    // Determine which API base URL to use
-    const apiBaseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-      ? API_CONFIG.local 
-      : API_CONFIG.production;
+// Determine which API base URL to use
+const apiBaseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+  ? API_CONFIG.local 
+  : API_CONFIG.production;
 
-    console.log("Using API server at:", apiBaseUrl);
+console.log("Using API server at:", apiBaseUrl);
 
-    // Application state
-    let map;
-    let currentMarker = null;
-    let tempClickLocation = null;
-    const layerColors = {
-      portAuthorities: '#FF4081',
-      marineParks: '#4CAF50',
-      fishHabitat: '#FF9800',
-      cockburnSound: '#2196F3',
-      mooringAreas: '#9C27B0',
-      marineInfrastructure: '#795548',
-      recommendedZones: '#673AB7'
-    };
-    
-    // Display error toast with message
-    function showError(message, duration = 5000) {
-      const toast = document.getElementById('errorToast');
-      toast.textContent = message;
-      toast.style.display = 'block';
-      
-      setTimeout(() => {
-        toast.style.display = 'none';
-      }, duration);
-    }
-    
-    // Update loading state for layer controls
-    function updateLayerLoadingState(key, isLoading) {
-      const control = document.querySelector(`#${key}Checkbox`);
-      if (control) {
-        const parent = control.closest('.layer-control');
-        if (parent) {
-          if (isLoading) {
-            parent.classList.add('layer-control-loading');
-          } else {
-            parent.classList.remove('layer-control-loading');
-          }
-        }
+// Application state
+let map;
+let currentMarker = null;
+let tempClickLocation = null;
+
+// Fixed: Move govLayers to global scope so it's accessible across functions
+const govLayers = {
+  portAuthorities: { 
+    url: `/api/portAuthorities`, 
+    style: { color: '#FF4081', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+    layer: null
+  },
+  marineParks: { 
+    url: `/api/marineParks`, 
+    style: { color: '#4CAF50', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+    layer: null
+  },
+  fishHabitat: { 
+    url: `/api/fishHabitat`, 
+    style: { color: '#FF9800', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+    layer: null
+  },
+  cockburnSound: { 
+    url: `/api/cockburnSound`, 
+    style: { color: '#2196F3', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+    layer: null
+  },
+  mooringAreas: { 
+    url: `/api/mooringAreas`, 
+    style: { color: '#9C27B0', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+    layer: null
+  },
+  marineInfrastructure: { 
+    url: `/api/marineInfrastructure`, 
+    style: { color: '#795548', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+    layer: null
+  },
+  recommendedZones: { 
+    url: `/api/recommendedZones`, 
+    style: { color: '#673AB7', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
+    layer: null
+  }
+};
+
+const layerColors = {
+  portAuthorities: '#FF4081',
+  marineParks: '#4CAF50',
+  fishHabitat: '#FF9800',
+  cockburnSound: '#2196F3',
+  mooringAreas: '#9C27B0',
+  marineInfrastructure: '#795548',
+  recommendedZones: '#673AB7'
+};
+
+// Display error toast with message
+function showError(message, duration = 5000) {
+  const toast = document.getElementById('errorToast');
+  toast.textContent = message;
+  toast.style.display = 'block';
+  
+  setTimeout(() => {
+    toast.style.display = 'none';
+  }, duration);
+}
+
+// Update loading state for layer controls
+function updateLayerLoadingState(key, isLoading) {
+  const control = document.querySelector(`#${key}Checkbox`);
+  if (control) {
+    const parent = control.closest('.layer-control');
+    if (parent) {
+      if (isLoading) {
+        parent.classList.add('layer-control-loading');
+      } else {
+        parent.classList.remove('layer-control-loading');
       }
     }
+  }
+}
+
+// Modified fetch function with retry logic and timeout control
+async function fetchLayerData(url, key) {
+  try {
+    // Special handling for recommendedZones which can be slow to calculate
+    const isRecommendedZones = key === 'recommendedZones';
     
-    // Modified fetch function with retry logic and timeout control
-    async function fetchLayerData(url, key) {
-      try {
-        // Special handling for recommendedZones which can be slow to calculate
-        const isRecommendedZones = key === 'recommendedZones';
+    // Determine the correct URL to fetch from
+    const fetchUrl = url.startsWith('http') 
+      ? url // Use the full URL if it's already absolute
+      : `${apiBaseUrl}${url.startsWith('/') ? '' : '/'}${url}`; // Otherwise prepend the base URL
+    
+    console.log(`Fetching data from: ${fetchUrl}`);
+    
+    // Set longer timeout for recommendedZones
+    const timeoutDuration = isRecommendedZones ? 30000 : 15000; // 30 seconds for zones, 15 for others
+    
+    // Create an AbortController to handle timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutDuration);
+    
+    try {
+      // Try with a higher timeout for recommendedZones
+      const response = await fetch(fetchUrl, {
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to load ${key}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      return data;
+    } catch (fetchError) {
+      // For recommendedZones, create a fallback if it fails
+      if (isRecommendedZones) {
+        console.warn(`Using fallback for ${key}: ${fetchError.message}`);
         
-        // Determine the correct URL to fetch from
-        const fetchUrl = url.startsWith('http') 
-          ? url // Use the full URL if it's already absolute
-          : `${apiBaseUrl}${url.startsWith('/') ? '' : '/'}${url}`; // Otherwise prepend the base URL
-        
-        console.log(`Fetching data from: ${fetchUrl}`);
-        
-        // Set longer timeout for recommendedZones
-        const timeoutDuration = isRecommendedZones ? 30000 : 15000; // 30 seconds for zones, 15 for others
-        
-        // Create an AbortController to handle timeout
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeoutDuration);
-        
-        try {
-          // Try with a higher timeout for recommendedZones
-          const response = await fetch(fetchUrl, {
-            signal: controller.signal
-          });
-          
-          clearTimeout(timeoutId);
-          
-          if (!response.ok) {
-            throw new Error(`Failed to load ${key}: ${response.statusText}`);
-          }
-          
-          const data = await response.json();
-          return data;
-        } catch (fetchError) {
-          // For recommendedZones, create a fallback if it fails
-          if (isRecommendedZones) {
-            console.warn(`Using fallback for ${key}: ${fetchError.message}`);
-            
-            // Return a simple fallback zone
-            return {
-              type: 'FeatureCollection',
-              features: [
-                {
-                  type: 'Feature',
-                  properties: {
-                    type: 'Potential Cleaning Zone (Client Fallback)',
-                    description: 'Fallback cleaning zone - could not reach server'
-                  },
-                  geometry: {
-                    type: 'Polygon',
-                    coordinates: [
-                      [
-                        [115.65, -32.02],
-                        [115.68, -32.02],
-                        [115.68, -31.98],
-                        [115.65, -31.98],
-                        [115.65, -32.02]
-                      ]
-                    ]
-                  }
-                }
-              ]
-            };
-          } else {
-            // For other layers, rethrow the error
-            throw fetchError;
-          }
-        }
-      } catch (error) {
-        console.error(`Error fetching ${key}:`, error);
-        
-        // For recommendedZones, always provide a fallback
-        if (key === 'recommendedZones') {
-          console.warn(`Using emergency fallback for ${key}`);
-          return {
-            type: 'FeatureCollection',
-            features: [
-              {
-                type: 'Feature',
-                properties: {
-                  type: 'Potential Cleaning Zone (Fallback)',
-                  description: 'Emergency fallback zone'
-                },
-                geometry: {
-                  type: 'Polygon',
-                  coordinates: [
-                    [
-                      [115.65, -32.02],
-                      [115.68, -32.02],
-                      [115.68, -31.98],
-                      [115.65, -31.98],
-                      [115.65, -32.02]
-                    ]
+        // Return a simple fallback zone
+        return {
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: {
+                type: 'Potential Cleaning Zone (Client Fallback)',
+                description: 'Fallback cleaning zone - could not reach server'
+              },
+              geometry: {
+                type: 'Polygon',
+                coordinates: [
+                  [
+                    [115.65, -32.02],
+                    [115.68, -32.02],
+                    [115.68, -31.98],
+                    [115.65, -31.98],
+                    [115.65, -32.02]
                   ]
-                }
+                ]
               }
-            ]
-          };
-        }
-        
-        // For other layers, rethrow
-        throw error;
+            }
+          ]
+        };
+      } else {
+        // For other layers, rethrow the error
+        throw fetchError;
       }
     }
+  } catch (error) {
+    console.error(`Error fetching ${key}:`, error);
     
-    // Function to perform location analysis - updated for deployed server
-    async function analyzeLocation(lat, lng) {
-      try {
-        document.getElementById('loadingMessage').textContent = 'Analyzing location...';
-        document.getElementById('loadingOverlay').style.display = 'flex';
-        
-        // Add marker at clicked location
-        if (currentMarker) {
-          map.removeLayer(currentMarker);
-        }
-        
-        // Create custom marker
-        const markerHtml = `<div class="analysis-marker">?</div>`;
-        const icon = L.divIcon({
-          html: markerHtml,
-          className: '',
-          iconSize: [30, 30],
-          iconAnchor: [15, 15]
-        });
-        
-        currentMarker = L.marker([lat, lng], { icon: icon }).addTo(map);
-        
-        // Make API call to the backend for analysis
-        const analyzeUrl = `${apiBaseUrl}/api/analyzeProximity`;
-        console.log(`Sending analysis request to: ${analyzeUrl}`);
-        
-        const response = await fetch(analyzeUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ lat, lng })
-        });
-        
-        if (!response.ok) {
-          throw new Error(`Analysis request failed: ${response.statusText}`);
-        }
-        
-        const data = await response.json();
-        displayAnalysisResults(data);
-      } catch (error) {
-        console.error('Analysis error:', error);
-        showError(`Failed to analyze location: ${error.message}`);
-      } finally {
-        document.getElementById('loadingOverlay').style.display = 'none';
-      }
+    // For recommendedZones, always provide a fallback
+    if (key === 'recommendedZones') {
+      console.warn(`Using emergency fallback for ${key}`);
+      return {
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            properties: {
+              type: 'Potential Cleaning Zone (Fallback)',
+              description: 'Emergency fallback zone'
+            },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [
+                [
+                  [115.65, -32.02],
+                  [115.68, -32.02],
+                  [115.68, -31.98],
+                  [115.65, -31.98],
+                  [115.65, -32.02]
+                ]
+              ]
+            }
+          }
+        ]
+      };
     }
     
-    // Function to display analysis results
-    function displayAnalysisResults(data) {
-      const container = document.getElementById('analysisContainer');
-      const content = document.getElementById('analysisContent');
-      
-      // Clear previous content
-      content.innerHTML = '';
-      
-      // Add location info
-      const locationInfo = document.createElement('div');
-      locationInfo.innerHTML = `
-        <strong>Coordinates:</strong> ${data.coordinates.lat.toFixed(5)}, ${data.coordinates.lng.toFixed(5)}
+    // For other layers, rethrow
+    throw error;
+  }
+}
+
+// Function to perform location analysis - updated for deployed server
+async function analyzeLocation(lat, lng) {
+  try {
+    document.getElementById('loadingMessage').textContent = 'Analyzing location...';
+    document.getElementById('loadingOverlay').style.display = 'flex';
+    
+    // Add marker at clicked location
+    if (currentMarker) {
+      map.removeLayer(currentMarker);
+    }
+    
+    // Create custom marker
+    const markerHtml = `<div class="analysis-marker">?</div>`;
+    const icon = L.divIcon({
+      html: markerHtml,
+      className: '',
+      iconSize: [30, 30],
+      iconAnchor: [15, 15]
+    });
+    
+    currentMarker = L.marker([lat, lng], { icon: icon }).addTo(map);
+    
+    // Make API call to the backend for analysis
+    const analyzeUrl = `${apiBaseUrl}/api/analyzeProximity`;
+    console.log(`Sending analysis request to: ${analyzeUrl}`);
+    
+    const response = await fetch(analyzeUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ lat, lng })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Analysis request failed: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    displayAnalysisResults(data);
+  } catch (error) {
+    console.error('Analysis error:', error);
+    showError(`Failed to analyze location: ${error.message}`);
+  } finally {
+    document.getElementById('loadingOverlay').style.display = 'none';
+  }
+}
+
+// Function to display analysis results
+function displayAnalysisResults(data) {
+  const container = document.getElementById('analysisContainer');
+  const content = document.getElementById('analysisContent');
+  
+  // Clear previous content
+  content.innerHTML = '';
+  
+  // Add location info
+  const locationInfo = document.createElement('div');
+  locationInfo.innerHTML = `
+    <strong>Coordinates:</strong> ${data.coordinates.lat.toFixed(5)}, ${data.coordinates.lng.toFixed(5)}
+  `;
+  content.appendChild(locationInfo);
+  
+  // Add nautical references section
+  if (data.results.nauticalReferences) {
+    const nauticalDiv = document.createElement('div');
+    nauticalDiv.className = 'analysis-item';
+    
+    let nauticalHTML = `
+      <div class="analysis-header">
+        <div class="analysis-icon" style="background: #0066CC"></div>
+        <div class="analysis-title">Nautical References</div>
+      </div>
+      <div class="analysis-detail">
+    `;
+    
+    Object.entries(data.results.nauticalReferences).forEach(([name, info]) => {
+      nauticalHTML += `
+        <p><strong>${name}</strong> (${info.type}): 
+           ${info.distance} km ${info.bearingText} (${info.bearing}°)
+           <br><small>${info.description}</small>
+        </p>
       `;
-      content.appendChild(locationInfo);
+    });
+    
+    nauticalHTML += `</div>`;
+    nauticalDiv.innerHTML = nauticalHTML;
+    content.appendChild(nauticalDiv);
+  }
+  
+  // Add recommendation summary
+  if (data.results.recommendedZone) {
+    const recommendationDiv = document.createElement('div');
+    recommendationDiv.className = 'analysis-item';
+    
+    if (data.results.recommendedZone.error) {
+      // Handle error in recommendedZone
+      recommendationDiv.innerHTML = `
+        <div class="analysis-header">
+          <div class="analysis-icon" style="background: ${layerColors.recommendedZones}"></div>
+          <div class="analysis-title">Site Suitability</div>
+        </div>
+        <div class="analysis-detail">
+          <p class="analysis-warning">
+            Unable to determine if this location is in a recommended zone.
+          </p>
+        </div>
+      `;
+    } else {
+      const isRecommended = data.results.recommendedZone.insideRecommendedZone;
       
-      // Add nautical references section
-      if (data.results.nauticalReferences) {
-        const nauticalDiv = document.createElement('div');
-        nauticalDiv.className = 'analysis-item';
-        
-        let nauticalHTML = `
-          <div class="analysis-header">
-            <div class="analysis-icon" style="background: #0066CC"></div>
-            <div class="analysis-title">Nautical References</div>
-          </div>
-          <div class="analysis-detail">
-        `;
-        
-        Object.entries(data.results.nauticalReferences).forEach(([name, info]) => {
-          nauticalHTML += `
-            <p><strong>${name}</strong> (${info.type}): 
-               ${info.distance} km ${info.bearingText} (${info.bearing}°)
-               <br><small>${info.description}</small>
-            </p>
-          `;
-        });
-        
-        nauticalHTML += `</div>`;
-        nauticalDiv.innerHTML = nauticalHTML;
-        content.appendChild(nauticalDiv);
-      }
-      
-      // Add recommendation summary
-      if (data.results.recommendedZone) {
-        const recommendationDiv = document.createElement('div');
-        recommendationDiv.className = 'analysis-item';
-        
-        if (data.results.recommendedZone.error) {
-          // Handle error in recommendedZone
-          recommendationDiv.innerHTML = `
-            <div class="analysis-header">
-              <div class="analysis-icon" style="background: ${layerColors.recommendedZones}"></div>
-              <div class="analysis-title">Site Suitability</div>
-            </div>
-            <div class="analysis-detail">
-              <p class="analysis-warning">
-                Unable to determine if this location is in a recommended zone.
-              </p>
-            </div>
-          `;
-        } else {
-          const isRecommended = data.results.recommendedZone.insideRecommendedZone;
-          
-          recommendationDiv.innerHTML = `
-            <div class="analysis-header">
-              <div class="analysis-icon" style="background: ${layerColors.recommendedZones}"></div>
-              <div class="analysis-title">Site Suitability</div>
-            </div>
-            <div class="analysis-detail">
-              <p class="${isRecommended ? 'analysis-good' : 'analysis-warning'}">
-                This location is ${isRecommended ? '' : 'NOT '}within a recommended cleaning zone.
-              </p>
-            </div>
-          `;
-        }
-        content.appendChild(recommendationDiv);
-      }
-      
-      // Add results for each constraint layer
-      const constraints = Object.entries(data.results)
-        .filter(([key]) => key !== 'recommendedZone' && key !== 'nauticalReferences');
-      
-      for (const [key, result] of constraints) {
-        const constraintDiv = document.createElement('div');
-        constraintDiv.className = 'analysis-item';
-        
-        // Format the constraint name nicely
-        const constraintName = key
-          .replace(/([A-Z])/g, ' $1')
-          .replace(/^./, str => str.toUpperCase());
-        
-        // Check if there's an error for this constraint
-        if (result.error || result.status) {
-          constraintDiv.innerHTML = `
-            <div class="analysis-header">
-              <div class="analysis-icon" style="background: ${layerColors[key] || '#666'}"></div>
-              <div class="analysis-title">${constraintName}</div>
-            </div>
-            <div class="analysis-detail">
-              <p>No proximity data available</p>
-            </div>
-          `;
-          content.appendChild(constraintDiv);
-          continue;
-        }
-        
-        // Determine if this constraint is a concern
-        const isInside = result.insideFeature === true;
-        const isClose = !isInside && result.distance && parseFloat(result.distance) < 1.0;
-        
-        let statusClass = '';
-        let statusText = '';
-        
-        if (isInside) {
-          statusClass = 'analysis-warning';
-          statusText = `Inside ${result.featureName}`;
-        } else if (isClose) {
-          statusClass = 'analysis-warning';
-          statusText = `Close to ${result.featureName} (${result.distance} km)`;
-        } else {
-          statusClass = 'analysis-good';
-          statusText = `${result.distance} km from nearest ${result.featureName}`;
-        }
-        
-        constraintDiv.innerHTML = `
-          <div class="analysis-header">
-            <div class="analysis-icon" style="background: ${layerColors[key] || '#666'}"></div>
-            <div class="analysis-title">${constraintName}</div>
-          </div>
-          <div class="analysis-detail">
-            <p class="${statusClass}">${statusText}</p>
-          </div>
-        `;
-        
-        content.appendChild(constraintDiv);
-      }
-      
-      // Show the analysis container
-      container.style.display = 'block';
+      recommendationDiv.innerHTML = `
+        <div class="analysis-header">
+          <div class="analysis-icon" style="background: ${layerColors.recommendedZones}"></div>
+          <div class="analysis-title">Site Suitability</div>
+        </div>
+        <div class="analysis-detail">
+          <p class="${isRecommended ? 'analysis-good' : 'analysis-warning'}">
+            This location is ${isRecommended ? '' : 'NOT '}within a recommended cleaning zone.
+          </p>
+        </div>
+      `;
+    }
+    content.appendChild(recommendationDiv);
+  }
+  
+  // Add results for each constraint layer
+  const constraints = Object.entries(data.results)
+    .filter(([key]) => key !== 'recommendedZone' && key !== 'nauticalReferences');
+  
+  for (const [key, result] of constraints) {
+    const constraintDiv = document.createElement('div');
+    constraintDiv.className = 'analysis-item';
+    
+    // Format the constraint name nicely
+    const constraintName = key
+      .replace(/([A-Z])/g, ' $1')
+      .replace(/^./, str => str.toUpperCase());
+    
+    // Check if there's an error for this constraint
+    if (result.error || result.status) {
+      constraintDiv.innerHTML = `
+        <div class="analysis-header">
+          <div class="analysis-icon" style="background: ${layerColors[key] || '#666'}"></div>
+          <div class="analysis-title">${constraintName}</div>
+        </div>
+        <div class="analysis-detail">
+          <p>No proximity data available</p>
+        </div>
+      `;
+      content.appendChild(constraintDiv);
+      continue;
     }
     
-    // Use this function to update the GeoJSON data in the recommendedZones layer
-    function updateRecommendedZonesLayer(geojson) {
-      try {
-        if (govLayers.recommendedZones.layer) {
+    // Determine if this constraint is a concern
+    const isInside = result.insideFeature === true;
+    const isClose = !isInside && result.distance && parseFloat(result.distance) < 1.0;
+    
+    let statusClass = '';
+    let statusText = '';
+    
+    if (isInside) {
+      statusClass = 'analysis-warning';
+      statusText = `Inside ${result.featureName}`;
+    } else if (isClose) {
+      statusClass = 'analysis-warning';
+      statusText = `Close to ${result.featureName} (${result.distance} km)`;
+    } else {
+      statusClass = 'analysis-good';
+      statusText = `${result.distance} km from nearest ${result.featureName}`;
+    }
+    
+    constraintDiv.innerHTML = `
+      <div class="analysis-header">
+        <div class="analysis-icon" style="background: ${layerColors[key] || '#666'}"></div>
+        <div class="analysis-title">${constraintName}</div>
+      </div>
+      <div class="analysis-detail">
+        <p class="${statusClass}">${statusText}</p>
+      </div>
+    `;
+    
+    content.appendChild(constraintDiv);
+  }
+  
+  // Show the analysis container
+  container.style.display = 'block';
+}
+
+// Use this function to update the GeoJSON data in the recommendedZones layer
+function updateRecommendedZonesLayer(geojson) {
+  try {
+    if (govLayers.recommendedZones.layer) {
+      map.removeLayer(govLayers.recommendedZones.layer);
+    }
+    
+    govLayers.recommendedZones.layer = L.geoJSON(geojson, {
+      style: govLayers.recommendedZones.style,
+      onEachFeature: (feature, layer) => {
+        if (feature.properties) {
+          let popupContent = '';
+          if (feature.properties.description && feature.properties.description.includes('Fallback')) {
+            // Add a note about fallback data
+            popupContent = '<strong>Note:</strong> Using simplified zone data. The server could not calculate detailed zones.<br><br>';
+          }
+          
+          popupContent += Object.entries(feature.properties)
+            .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
+            .join('<br>');
+            
+          layer.bindPopup(popupContent);
+        }
+      }
+    }).addTo(map);
+    
+    // Ensure clicks on layer features trigger the confirmation modal
+    govLayers.recommendedZones.layer.on('click', function(e) {
+      // Prevent default behavior and propagate our custom event
+      L.DomEvent.stopPropagation(e);
+      
+      // Store clicked location
+      tempClickLocation = e.latlng;
+      
+      // Show confirmation modal
+      document.getElementById('confirmationModal').style.display = 'block';
+    });
+    
+    // Update the checkbox
+    const checkbox = document.getElementById('recommendedZonesCheckbox');
+    if (checkbox) {
+      checkbox.checked = true; // Make sure checkbox is checked since we just added the layer
+      
+      checkbox.addEventListener('change', function(e) {
+        if (e.target.checked) {
+          map.addLayer(govLayers.recommendedZones.layer);
+        } else {
           map.removeLayer(govLayers.recommendedZones.layer);
         }
-        
-        govLayers.recommendedZones.layer = L.geoJSON(geojson, {
-          style: govLayers.recommendedZones.style,
-          onEachFeature: (feature, layer) => {
-            if (feature.properties) {
-              let popupContent = '';
-              if (feature.properties.description && feature.properties.description.includes('Fallback')) {
-                // Add a note about fallback data
-                popupContent = '<strong>Note:</strong> Using simplified zone data. The server could not calculate detailed zones.<br><br>';
-              }
-              
-              popupContent += Object.entries(feature.properties)
-                .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
-                .join('<br>');
-                
-              layer.bindPopup(popupContent);
-            }
-          }
-        }).addTo(map);
-        
-        // Ensure clicks on layer features trigger the confirmation modal
-        govLayers.recommendedZones.layer.on('click', function(e) {
-          // Prevent default behavior and propagate our custom event
-          L.DomEvent.stopPropagation(e);
-          
-          // Store clicked location
-          tempClickLocation = e.latlng;
-          
-          // Show confirmation modal
-          document.getElementById('confirmationModal').style.display = 'block';
-        });
-        
-        // Update the checkbox
-        const checkbox = document.getElementById('recommendedZonesCheckbox');
-        if (checkbox) {
-          checkbox.checked = true; // Make sure checkbox is checked since we just added the layer
-          
-          checkbox.addEventListener('change', function(e) {
-            if (e.target.checked) {
-              map.addLayer(govLayers.recommendedZones.layer);
-            } else {
-              map.removeLayer(govLayers.recommendedZones.layer);
-            }
-          });
-        }
-        
-        // Update loading state
-        updateLayerLoadingState('recommendedZones', false);
-        
-        return true;
-      } catch (error) {
-        console.error('Error updating recommendedZones layer:', error);
-        updateLayerLoadingState('recommendedZones', false);
-        return false;
-      }
+      });
     }
     
-    // Special function to load recommendedZones
-    function loadRecommendedZones() {
-      updateLayerLoadingState('recommendedZones', true);
-      document.getElementById('loadingMessage').textContent = 'Loading potential cleaning zones...';
+    // Update loading state
+    updateLayerLoadingState('recommendedZones', false);
+    
+    return true;
+  } catch (error) {
+    console.error('Error updating recommendedZones layer:', error);
+    updateLayerLoadingState('recommendedZones', false);
+    return false;
+  }
+}
+
+// Special function to load recommendedZones
+function loadRecommendedZones() {
+  updateLayerLoadingState('recommendedZones', true);
+  document.getElementById('loadingMessage').textContent = 'Loading potential cleaning zones...';
+  
+  return fetchLayerData(govLayers.recommendedZones.url, 'recommendedZones')
+    .then(geojson => {
+      // Update the layer with the received data
+      return updateRecommendedZonesLayer(geojson);
+    })
+    .catch(err => {
+      console.error(`Error loading recommendedZones:`, err);
+      showError(`Showing simplified cleaning zones. Detailed zones unavailable.`);
       
-      return fetchLayerData(govLayers.recommendedZones.url, 'recommendedZones')
-        .then(geojson => {
-          // Update the layer with the received data
-          return updateRecommendedZonesLayer(geojson);
-        })
-        .catch(err => {
-          console.error(`Error loading recommendedZones:`, err);
-          showError(`Showing simplified cleaning zones. Detailed zones unavailable.`);
-          
-          // Create a simple fallback
-          const fallbackGeoJSON = {
-            type: 'FeatureCollection',
-            features: [
-              {
-                type: 'Feature',
-                properties: {
-                  type: 'Potential Cleaning Zone (Fallback)',
-                  description: 'Simplified cleaning zone - detailed calculation unavailable'
-                },
-                geometry: {
-                  type: 'Polygon',
-                  coordinates: [
-                    [
-                      [115.65, -32.02],
-                      [115.68, -32.02],
-                      [115.68, -31.98],
-                      [115.65, -31.98],
-                      [115.65, -32.02]
-                    ]
-                  ]
-                }
-              }
-            ]
-          };
-          
-          // Update the layer with fallback data
-          return updateRecommendedZonesLayer(fallbackGeoJSON);
-        });
-    }
+      // Create a simple fallback
+      const fallbackGeoJSON = {
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            properties: {
+              type: 'Potential Cleaning Zone (Fallback)',
+              description: 'Simplified cleaning zone - detailed calculation unavailable'
+            },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [
+                [
+                  [115.65, -32.02],
+                  [115.68, -32.02],
+                  [115.68, -31.98],
+                  [115.65, -31.98],
+                  [115.65, -32.02]
+                ]
+              ]
+            }
+          }
+        ]
+      };
+      
+      // Update the layer with fallback data
+      return updateRecommendedZonesLayer(fallbackGeoJSON);
+    });
+}
+
+// Fixed: Better implementation of sea marks loading
+async function createSeaMarksLayer() {
+  try {
+    updateLayerLoadingState('seaMarks', true);
     
-    async function initMap() {
+    // Define sea mark sources - updated with more reliable URLs
+    const seamarkUrls = [
+      'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
+      'https://t1.openseamap.org/seamark/{z}/{x}/{y}.png',
+      'https://map.openseamap.org/seamark/{z}/{x}/{y}.png'
+    ];
+    
+    // Improved approach: Create a test function to verify if a tile source works
+    const testTileUrl = async (url) => {
       try {
-        // Create map centered over Fremantle
-        map = L.map('map').setView([-32.05, 115.73], 12);
-        
-        // Define base layers
-        const baseLayers = {
-          openStreetMap: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '© OpenStreetMap contributors'
-          }),
-          thunderforestNautical: L.tileLayer('https://{s}.tile.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey=c6ffd605f6934989a8125a7578dc55eb', {
-            maxZoom: 19,
-            attribution: 'Maps © <a href="https://www.thunderforest.com">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'
-          }),
-          esriOceanBase: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean_Basemap/MapServer/tile/{z}/{y}/{x}', {
-            maxZoom: 19,
-            attribution: 'Tiles © Esri — Sources: GEBCO, NOAA, CHS, OSU, UNH, CSUMB, National Geographic, DeLorme, NAVTEQ, and Esri'
-          }),
-          // Add OpenSeaMap base layer
-          openSeaMapBase: L.tileLayer('https://tiles.openseamap.org/base/{z}/{x}/{y}.png', {
-            maxZoom: 18,
-            attribution: 'Map data: © <a href="http://www.openseamap.org">OpenSeaMap</a> contributors'
-          }),
-          // Add NOAA nautical charts (RNC tiles)
-          noaaCharts: L.tileLayer('https://tileservice.charts.noaa.gov/tiles/50000_1/{z}/{x}/{y}.png', {
-            maxZoom: 18,
-            opacity: 0.8,
-            attribution: 'NOAA Charts - <a href="https://charts.noaa.gov/">Office of Coast Survey</a>'
-          })
-        };
-        
-        // Add the default base layer
-        baseLayers.esriOceanBase.addTo(map);
-        
-        // Add layer control for base maps
-        const layerControl = L.control.layers({
-          "OpenStreetMap": baseLayers.openStreetMap,
-          "Thunderforest Outdoors": baseLayers.thunderforestNautical,
-          "ESRI Ocean Base": baseLayers.esriOceanBase,
-          "OpenSeaMap Base": baseLayers.openSeaMapBase,
-          "NOAA Charts": baseLayers.noaaCharts
-        }, null, {
-          position: 'topleft',
-          collapsed: false
-        }).addTo(map);
-        
-        // Create a separate overlay container for nautical features
-        const nauticalOverlays = {};
-
-        // --- Government Data Layers ---
-        const govLayers = {
-          portAuthorities: { 
-            url: `${apiBaseUrl}/api/portAuthorities`, 
-            style: { color: '#FF4081', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-            layer: null
-          },
-          marineParks: { 
-            url: `${apiBaseUrl}/api/marineParks`, 
-            style: { color: '#4CAF50', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-            layer: null
-          },
-          fishHabitat: { 
-            url: `${apiBaseUrl}/api/fishHabitat`, 
-            style: { color: '#FF9800', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-            layer: null
-          },
-          cockburnSound: { 
-            url: `${apiBaseUrl}/api/cockburnSound`, 
-            style: { color: '#2196F3', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-            layer: null
-          },
-          mooringAreas: { 
-            url: `${apiBaseUrl}/api/mooringAreas`, 
-            style: { color: '#9C27B0', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-            layer: null
-          },
-          marineInfrastructure: { 
-            url: `${apiBaseUrl}/api/marineInfrastructure`, 
-            style: { color: '#795548', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-            layer: null
-          },
-          recommendedZones: { 
-            url: `${apiBaseUrl}/api/recommendedZones`, 
-            style: { color: '#673AB7', weight: 2, opacity: 0.8, fillOpacity: 0.2 },
-            layer: null
-          }
-        };
-
-        // Bind the click event on the map to show the confirmation modal
-        map.on('click', function(e) {
-          // Store the clicked location
-          tempClickLocation = e.latlng;
-          
-          // Show confirmation modal
-          document.getElementById('confirmationModal').style.display = 'block';
-        });
-
-        // Handle confirmation modal buttons
-        document.getElementById('confirmYes').addEventListener('click', function() {
-          if (tempClickLocation) {
-            // Hide the modal
-            document.getElementById('confirmationModal').style.display = 'none';
-            
-            // Perform the analysis with the stored location
-            analyzeLocation(tempClickLocation.lat, tempClickLocation.lng);
-          }
-        });
-
-        document.getElementById('confirmNo').addEventListener('click', function() {
-          // Hide the modal without performing analysis
-          document.getElementById('confirmationModal').style.display = 'none';
-          tempClickLocation = null;
-          
-          // Remove any existing marker if the user cancels
-          if (currentMarker) {
-            map.removeLayer(currentMarker);
-            currentMarker = null;
-          }
-        });
-        
-        // Analysis panel close button
-        document.getElementById('analysisClose').addEventListener('click', function() {
-          document.getElementById('analysisContainer').style.display = 'none';
-          
-          // Remove the marker when closing the analysis
-          if (currentMarker) {
-            map.removeLayer(currentMarker);
-            currentMarker = null;
-          }
-        });
-
-        // Load all government layers in parallel except recommendedZones
-        const loadPromises = Object.keys(govLayers)
-          .filter(key => key !== 'recommendedZones') // Handle recommendedZones separately
-          .map(key => {
-            updateLayerLoadingState(key, true);
-            document.getElementById('loadingMessage').textContent = `Loading ${key.replace(/([A-Z])/g, ' $1').toLowerCase()}...`;
-            
-            return fetchLayerData(govLayers[key].url, key)
-              .then(geojson => {
-                govLayers[key].layer = L.geoJSON(geojson, {
-                  style: govLayers[key].style,
-                  onEachFeature: (feature, layer) => {
-                    if (feature.properties) {
-                      const popupContent = Object.entries(feature.properties)
-                        .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
-                        .join('<br>');
-                      layer.bindPopup(popupContent);
-                    }
-                  }
-                }).addTo(map);
-                
-                // Ensure clicks on layer features also trigger the confirmation modal
-                govLayers[key].layer.on('click', function(e) {
-                  // Prevent default behavior and propagate our custom event
-                  L.DomEvent.stopPropagation(e);
-                  
-                  // Store clicked location
-                  tempClickLocation = e.latlng;
-                  
-                  // Show confirmation modal
-                  document.getElementById('confirmationModal').style.display = 'block';
-                });
-                
-                const checkbox = document.getElementById(key + 'Checkbox');
-                if (checkbox) {
-                  checkbox.addEventListener('change', function(e) {
-                    if (e.target.checked) {
-                      map.addLayer(govLayers[key].layer);
-                    } else {
-                      map.removeLayer(govLayers[key].layer);
-                    }
-                  });
-                }
-                
-                updateLayerLoadingState(key, false);
-              })
-              .catch(err => {
-                console.error(`Error loading ${key}:`, err);
-                showError(`Failed to load ${key}. Please try refreshing the page.`);
-                updateLayerLoadingState(key, false);
-              });
-          });
-        
-        // Add the separate recommendedZones loading
-        loadPromises.push(loadRecommendedZones());
-
-        // Wait for all layers to load
-        await Promise.allSettled(loadPromises);
-        
-        // Initialize nautical features
-        await initNauticalFeatures(layerControl, nauticalOverlays);
-        
-        // Fit bounds after a short delay to ensure layers are rendered
-        setTimeout(() => { 
-          map.invalidateSize(); 
-          
-          // Fit to a predefined bounding box around Fremantle
-          map.fitBounds([
-            [-32.15, 115.65],  // Southwest
-            [-31.95, 115.85]   // Northeast
-          ]);
-        }, 200);
-      } catch (error) {
-        console.error('Map initialization error:', error);
-        showError(`Failed to initialize map: ${error.message}`);
-      } finally {
-        // Remove loading overlay when done
-        setTimeout(() => { 
-          document.getElementById('loadingOverlay').style.display = 'none'; 
-        }, 1000);
-      }
-    }
-
-    // Initialize nautical features (passing the layer control to add overlays)
-    async function initNauticalFeatures(layerControl, nauticalOverlays) {
-      try {
-        document.getElementById('loadingMessage').textContent = 'Loading nautical features...';
-        
-        // Create sea marks layer
-        const seaMarksLayer = await createSeaMarksLayer();
-        if (seaMarksLayer) {
-          nauticalOverlays['Sea Marks'] = seaMarksLayer;
-          layerControl.addOverlay(seaMarksLayer, 'Sea Marks');
-          
-          // Add to map if checkbox is checked
-          const seaMarksCheckbox = document.getElementById('seaMarksCheckbox');
-          if (seaMarksCheckbox && seaMarksCheckbox.checked) {
-            seaMarksLayer.addTo(map);
-          }
-          
-          seaMarksCheckbox.addEventListener('change', function(e) {
-            if (e.target.checked) {
-              seaMarksLayer.addTo(map);
-            } else {
-              map.removeLayer(seaMarksLayer);
-            }
-          });
-        }
-        
-        // Create bathymetry layer
-        const bathymetryLayer = createBathymetryLayer();
-        nauticalOverlays['Bathymetry'] = bathymetryLayer;
-        layerControl.addOverlay(bathymetryLayer, 'Bathymetry (Depth Contours)');
-        
-        // Add bathymetry by default if checkbox is checked
-        const bathymetryCheckbox = document.getElementById('bathymetryCheckbox');
-        if (bathymetryCheckbox && bathymetryCheckbox.checked) {
-          bathymetryLayer.addTo(map);
-        }
-        
-        bathymetryCheckbox.addEventListener('change', function(e) {
-          if (e.target.checked) {
-            bathymetryLayer.addTo(map);
-          } else {
-            map.removeLayer(bathymetryLayer);
-          }
-        });
-        
-        // Create marine traffic layer
-        const marineTrafficLayer = createMarineTrafficLayer();
-        nauticalOverlays['Marine Traffic'] = marineTrafficLayer;
-        layerControl.addOverlay(marineTrafficLayer, 'Marine Traffic (AIS)');
-        
-        // Bind to checkbox
-        const marineTrafficCheckbox = document.getElementById('marineTrafficCheckbox');
-        if (marineTrafficCheckbox) {
-          marineTrafficCheckbox.addEventListener('change', function(e) {
-            if (e.target.checked) {
-              marineTrafficLayer.addTo(map);
-            } else {
-              map.removeLayer(marineTrafficLayer);
-            }
-          });
-        }
-        
-        // Create weather layer
-        const weatherLayer = createWeatherLayer();
-        nauticalOverlays['Weather'] = weatherLayer;
-        layerControl.addOverlay(weatherLayer, 'Weather & Wind');
-        
-        // Bind to checkbox
-        const weatherCheckbox = document.getElementById('weatherCheckbox');
-        if (weatherCheckbox) {
-          weatherCheckbox.addEventListener('change', function(e) {
-            if (e.target.checked) {
-              weatherLayer.addTo(map);
-            } else {
-              map.removeLayer(weatherLayer);
-            }
-          });
-        }
-        
-        // Create navigational warnings layer
-        const navWarningsLayer = createNavigationalWarningsLayer();
-        nauticalOverlays['Navigational Warnings'] = navWarningsLayer;
-        layerControl.addOverlay(navWarningsLayer, 'Navigational Warnings');
-        
-        // Bind to checkbox
-        const navWarningsCheckbox = document.getElementById('navigationalWarningsCheckbox');
-        if (navWarningsCheckbox) {
-          navWarningsCheckbox.addEventListener('change', function(e) {
-            if (e.target.checked) {
-              navWarningsLayer.addTo(map);
-            } else {
-              map.removeLayer(navWarningsLayer);
-            }
-          });
-        }
-        
-        // Add compass rose
-        addCompassRose();
-        
-        // Update loading state for seamark checkbox
-        updateLayerLoadingState('seaMarks', false);
-        
-        return true;
-      } catch (error) {
-        console.error('Failed to initialize nautical features:', error);
-        showError('Some nautical features failed to load. You can refresh to try again.');
-        
-        // Update loading states
-        updateLayerLoadingState('seaMarks', false);
-        
+        // Test by loading a simple tile image
+        const testUrl = url.replace('{z}/{x}/{y}', '10/529/336');
+        const response = await fetch(testUrl, { method: 'HEAD', timeout: 3000 });
+        return response.ok;
+      } catch {
         return false;
       }
+    };
+    
+    // Try each URL and use the first one that works
+    for (const url of seamarkUrls) {
+      try {
+        const works = await testTileUrl(url);
+        if (works) {
+          console.log(`Using sea marks from: ${url}`);
+          return L.tileLayer(url, {
+            maxZoom: 19,
+            attribution: 'Sea Marks © <a href="http://www.openseamap.org">OpenSeaMap</a>'
+          });
+        }
+      } catch (err) {
+        console.warn(`Failed to load sea marks from ${url}:`, err);
+      }
     }
     
-    // Create sea marks layer
-    async function createSeaMarksLayer() {
-      try {
-        updateLayerLoadingState('seaMarks', true);
+    // If all tile sources fail, create static fallback
+    console.log("All sea mark tile sources failed, using fallback");
+    return createFallbackSeaMarks();
+  } catch (error) {
+    console.error('Error creating sea marks layer:', error);
+    return createFallbackSeaMarks(); // Use fallback if there's an error
+  } finally {
+    updateLayerLoadingState('seaMarks', false);
+  }
+}
+
+// Create fallback sea marks (static markers) - Enhanced with more markers
+function createFallbackSeaMarks() {
+  const layer = L.layerGroup();
+  
+  // Enhanced common navigation aids for Fremantle area
+  const navAids = [
+    { pos: [-32.045, 115.730], type: 'lighthouse', name: 'Fremantle Lighthouse', icon: '🗼' },
+    { pos: [-32.053, 115.742], type: 'buoy', name: 'Entrance Channel Buoy (Port)', icon: '🔴' },
+    { pos: [-32.053, 115.738], type: 'buoy', name: 'Entrance Channel Buoy (Starboard)', icon: '🟢' },
+    { pos: [-32.042, 115.725], type: 'beacon', name: 'Navigation Beacon', icon: '🚨' },
+    { pos: [-32.030, 115.710], type: 'anchorage', name: 'Designated Anchorage', icon: '⚓' },
+    { pos: [-32.060, 115.750], type: 'restricted', name: 'Restricted Zone', icon: '⛔' },
+    { pos: [-32.035, 115.715], type: 'beacon', name: 'West Cardinal Mark', icon: '⬆️' },
+    // Added more nautical features
+    { pos: [-32.058, 115.745], type: 'buoy', name: 'Harbor Entrance Marker', icon: '🔴' },
+    { pos: [-32.038, 115.735], type: 'beacon', name: 'Navigational Light', icon: '💡' },
+    { pos: [-32.047, 115.722], type: 'danger', name: 'Submerged Hazard', icon: '⚠️' },
+    { pos: [-32.025, 115.725], type: 'anchorage', name: 'Secondary Anchorage', icon: '⚓' },
+    { pos: [-32.065, 115.735], type: 'buoy', name: 'South Channel Marker', icon: '🟢' },
+    { pos: [-32.070, 115.742], type: 'beacon', name: 'South Cardinal Mark', icon: '⬇️' },
+    { pos: [-32.050, 115.712], type: 'beacon', name: 'East Cardinal Mark', icon: '➡️' }
+  ];
+  
+  // Add each marker
+  navAids.forEach(aid => {
+    const marker = L.marker(aid.pos, {
+      icon: L.divIcon({
+        html: `<div style="font-size: 24px;">${aid.icon}</div>`,
+        className: 'sea-mark-icon',
+        iconSize: [30, 30],
+        iconAnchor: [15, 15]
+      })
+    }).bindPopup(`<b>${aid.name}</b><br>Type: ${aid.type}`);
+    
+    layer.addLayer(marker);
+  });
+  
+  return layer;
+}
+
+// Fixed: Enhanced bathymetry layer with more realistic data
+function createBathymetryLayer() {
+  const layer = L.layerGroup();
+  
+  // Enhanced depth contours - more realistic for Fremantle area
+  const depthContours = [
+    { depth: 5, color: '#77c3ec', points: [
+      [-32.045, 115.735], [-32.050, 115.745], [-32.060, 115.750], 
+      [-32.070, 115.745], [-32.075, 115.735], [-32.070, 115.725],
+      [-32.065, 115.720], [-32.055, 115.725], [-32.050, 115.730],
+      [-32.045, 115.735]
+    ]},
+    { depth: 10, color: '#5ba3d0', points: [
+      [-32.040, 115.730], [-32.045, 115.740], [-32.055, 115.745], 
+      [-32.065, 115.740], [-32.070, 115.730], [-32.065, 115.720],
+      [-32.060, 115.715], [-32.050, 115.720], [-32.045, 115.725],
+      [-32.040, 115.730]
+    ]},
+    { depth: 20, color: '#3d83b3', points: [
+      [-32.035, 115.725], [-32.040, 115.735], [-32.050, 115.740], 
+      [-32.060, 115.735], [-32.065, 115.725], [-32.060, 115.715],
+      [-32.055, 115.710], [-32.045, 115.715], [-32.040, 115.720],
+      [-32.035, 115.725]
+    ]},
+    { depth: 30, color: '#206397', points: [
+      [-32.030, 115.720], [-32.035, 115.730], [-32.045, 115.735], 
+      [-32.055, 115.730], [-32.060, 115.720], [-32.055, 115.710],
+      [-32.050, 115.705], [-32.040, 115.710], [-32.035, 115.715],
+      [-32.030, 115.720]
+    ]},
+    { depth: 50, color: '#0a4674', points: [
+      [-32.025, 115.715], [-32.030, 115.725], [-32.040, 115.730], 
+      [-32.050, 115.725], [-32.055, 115.715], [-32.050, 115.705],
+      [-32.045, 115.700], [-32.035, 115.705], [-32.030, 115.710],
+      [-32.025, 115.715]
+    ]}
+  ];
+  
+  // Close all polygons to avoid rendering issues
+  depthContours.forEach(contour => {
+    // Make sure the first and last points match to close the polygon
+    if (JSON.stringify(contour.points[0]) !== JSON.stringify(contour.points[contour.points.length - 1])) {
+      contour.points.push(contour.points[0]);
+    }
+  });
+  
+  // Add each contour
+  depthContours.forEach(contour => {
+    // Create contour line
+    const polyline = L.polyline(contour.points, {
+      color: contour.color,
+      weight: 2,
+      opacity: 0.8,
+      smoothFactor: 1
+    }).bindTooltip(`${contour.depth}m depth`, { sticky: true });
+    
+    layer.addLayer(polyline);
+    
+    // Add depth labels
+    contour.points.forEach((point, index) => {
+      if (index % 2 === 0 && index < contour.points.length - 1) { // Add at every second point, skip the last duplicate
+        const label = L.marker(point, {
+          icon: L.divIcon({
+            html: `<div style="color: ${contour.color}; font-size: 10px; font-weight: bold;">${contour.depth}m</div>`,
+            className: 'depth-label',
+            iconSize: [30, 10],
+            iconAnchor: [15, 5]
+          })
+        });
         
-        // Define sea mark sources
-        const seamarkUrls = [
-          'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
-          'https://t1.openseamap.org/seamark/{z}/{x}/{y}.png',
-          'https://map.openseamap.org/seamark/{z}/{x}/{y}.png'
-        ];
+        layer.addLayer(label);
+      }
+    });
+    
+    // Create filled area
+    if (depthContours[depthContours.indexOf(contour) + 1]) {
+      const nextContour = depthContours[depthContours.indexOf(contour) + 1];
+      
+      // Create a polygon with proper closing
+      const filledArea = L.polygon(contour.points, {
+        color: contour.color,
+        weight: 0.5,
+        fillColor: contour.color,
+        fillOpacity: 0.1,
+        opacity: 0.5
+      });
+      
+      layer.addLayer(filledArea);
+    }
+  });
+  
+  return layer;
+}
+
+// Fixed: Update map initialization to use the correct base layers
+async function initMap() {
+  try {
+    // Create map centered over Fremantle
+    map = L.map('map').setView([-32.05, 115.73], 12);
+    
+    // Define base layers - fixed URLs and attribution
+    const baseLayers = {
+      openStreetMap: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap contributors'
+      }),
+      thunderforestNautical: L.tileLayer('https://{s}.tile.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey=c6ffd605f6934989a8125a7578dc55eb', {
+        maxZoom: 19,
+        attribution: 'Maps © <a href="https://www.thunderforest.com">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'
+      }),
+      esriOceanBase: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean_Basemap/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19,
+        attribution: 'Tiles © Esri — Sources: GEBCO, NOAA, CHS, OSU, UNH, CSUMB, National Geographic, DeLorme, NAVTEQ, and Esri'
+      }),
+      // Fixed OpenSeaMap base layer
+      openSeaMapBase: L.tileLayer('https://tiles.openseamap.org/base/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: 'Map data: © <a href="http://www.openseamap.org">OpenSeaMap</a> contributors'
+      }),
+      // Fixed NOAA nautical charts URL
+      noaaCharts: L.tileLayer('https://tileservice.charts.noaa.gov/tiles/50000_1/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        opacity: 0.8,
+        attribution: 'NOAA Charts - <a href="https://charts.noaa.gov/">Office of Coast Survey</a>'
+      })
+    };
+    
+    // Add the default base layer
+    baseLayers.esriOceanBase.addTo(map);
+    
+    // Add layer control for base maps
+    const layerControl = L.control.layers({
+      "OpenStreetMap": baseLayers.openStreetMap,
+      "Thunderforest Outdoors": baseLayers.thunderforestNautical,
+      "ESRI Ocean Base": baseLayers.esriOceanBase,
+      "OpenSeaMap Base": baseLayers.openSeaMapBase,
+      "NOAA Charts": baseLayers.noaaCharts
+    }, null, {
+      position: 'topleft',
+      collapsed: false
+    }).addTo(map);
+    
+    // Create a separate overlay container for nautical features
+    const nauticalOverlays = {};
+
+    // Bind the click event on the map to show the confirmation modal
+    map.on('click', function(e) {
+      // Store the clicked location
+      tempClickLocation = e.latlng;
+      
+      // Show confirmation modal
+      document.getElementById('confirmationModal').style.display = 'block';
+    });
+
+    // Handle confirmation modal buttons
+    document.getElementById('confirmYes').addEventListener('click', function() {
+      if (tempClickLocation) {
+        // Hide the modal
+        document.getElementById('confirmationModal').style.display = 'none';
         
-        // Try each URL
-        for (const url of seamarkUrls) {
-          try {
-            const layer = L.tileLayer(url, {
-              maxZoom: 19,
-              attribution: 'Sea Marks © <a href="http://www.openseamap.org">OpenSeaMap</a>'
+        // Perform the analysis with the stored location
+        analyzeLocation(tempClickLocation.lat, tempClickLocation.lng);
+      }
+    });
+
+    document.getElementById('confirmNo').addEventListener('click', function() {
+      // Hide the modal without performing analysis
+      document.getElementById('confirmationModal').style.display = 'none';
+      tempClickLocation = null;
+      
+      // Remove any existing marker if the user cancels
+      if (currentMarker) {
+        map.removeLayer(currentMarker);
+        currentMarker = null;
+      }
+    });
+    
+    // Analysis panel close button
+    document.getElementById('analysisClose').addEventListener('click', function() {
+      document.getElementById('analysisContainer').style.display = 'none';
+      
+      // Remove the marker when closing the analysis
+      if (currentMarker) {
+        map.removeLayer(currentMarker);
+        currentMarker = null;
+      }
+    });
+
+    // Load all government layers in parallel except recommendedZones
+    const loadPromises = Object.keys(govLayers)
+      .filter(key => key !== 'recommendedZones') // Handle recommendedZones separately
+      .map(key => {
+        updateLayerLoadingState(key, true);
+        document.getElementById('loadingMessage').textContent = `Loading ${key.replace(/([A-Z])/g, ' $1').toLowerCase()}...`;
+        
+        return fetchLayerData(govLayers[key].url, key)
+          .then(geojson => {
+            govLayers[key].layer = L.geoJSON(geojson, {
+              style: govLayers[key].style,
+              onEachFeature: (feature, layer) => {
+                if (feature.properties) {
+                  const popupContent = Object.entries(feature.properties)
+                    .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
+                    .join('<br>');
+                  layer.bindPopup(popupContent);
+                }
+              }
+            }).addTo(map);
+            
+            // Ensure clicks on layer features also trigger the confirmation modal
+            govLayers[key].layer.on('click', function(e) {
+              // Prevent default behavior and propagate our custom event
+              L.DomEvent.stopPropagation(e);
+              
+              // Store clicked location
+              tempClickLocation = e.latlng;
+              
+              // Show confirmation modal
+              document.getElementById('confirmationModal').style.display = 'block';
             });
             
-            return layer;
-          } catch (err) {
-            console.warn(`Failed to load sea marks from ${url}:`, err);
-            continue;
-          }
-        }
-        
-        // If all tile sources fail, create static fallback
-        return createFallbackSeaMarks();
-      } catch (error) {
-        console.error('Error creating sea marks layer:', error);
-        return createFallbackSeaMarks(); // Use fallback if there's an error
-      } finally {
-        updateLayerLoadingState('seaMarks', false);
-      }
-    }
-    
-    // Create fallback sea marks (static markers)
-    function createFallbackSeaMarks() {
-      const layer = L.layerGroup();
-      
-      // Common navigation aids
-      const navAids = [
-        { pos: [-32.045, 115.730], type: 'lighthouse', name: 'Fremantle Lighthouse', icon: '🗼' },
-        { pos: [-32.053, 115.742], type: 'buoy', name: 'Entrance Channel Buoy (Port)', icon: '🔴' },
-        { pos: [-32.053, 115.738], type: 'buoy', name: 'Entrance Channel Buoy (Starboard)', icon: '🟢' },
-        { pos: [-32.042, 115.725], type: 'beacon', name: 'Navigation Beacon', icon: '🚨' },
-        { pos: [-32.030, 115.710], type: 'anchorage', name: 'Designated Anchorage', icon: '⚓' },
-        { pos: [-32.060, 115.750], type: 'restricted', name: 'Restricted Zone', icon: '⛔' },
-        { pos: [-32.035, 115.715], type: 'beacon', name: 'West Cardinal Mark', icon: '⬆️' }
-      ];
-      
-      // Add each marker
-      navAids.forEach(aid => {
-        const marker = L.marker(aid.pos, {
-          icon: L.divIcon({
-            html: `<div style="font-size: 24px;">${aid.icon}</div>`,
-            className: 'sea-mark-icon',
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
+            const checkbox = document.getElementById(key + 'Checkbox');
+            if (checkbox) {
+              checkbox.addEventListener('change', function(e) {
+                if (e.target.checked) {
+                  map.addLayer(govLayers[key].layer);
+                } else {
+                  map.removeLayer(govLayers[key].layer);
+                }
+              });
+            }
+            
+            updateLayerLoadingState(key, false);
           })
-        }).bindPopup(`<b>${aid.name}</b><br>Type: ${aid.type}`);
-        
-        layer.addLayer(marker);
-      });
-      
-      return layer;
-    }
-    
-    // Create marine traffic layer
-    function createMarineTrafficLayer() {
-      const layer = L.layerGroup();
-      
-      // Sample vessel data
-      const vessels = [
-        { pos: [-32.025, 115.710], name: 'Cargo Vessel', type: 'cargo', heading: 45, speed: 12, icon: '🚢' },
-        { pos: [-32.040, 115.690], name: 'Oil Tanker', type: 'tanker', heading: 180, speed: 8, icon: '🛳️' },
-        { pos: [-32.055, 115.705], name: 'Passenger Ferry', type: 'passenger', heading: 270, speed: 15, icon: '🚢' },
-        { pos: [-32.035, 115.725], name: 'Fishing Vessel', type: 'fishing', heading: 90, speed: 5, icon: '🚣' },
-        { pos: [-32.015, 115.745], name: 'Navy Vessel', type: 'military', heading: 135, speed: 18, icon: '⚓' }
-      ];
-      
-      // Add vessel markers
-      vessels.forEach(vessel => {
-        const marker = L.marker(vessel.pos, {
-          icon: L.divIcon({
-            html: `<div style="font-size: 20px; transform: rotate(${vessel.heading}deg);">${vessel.icon}</div>`,
-            className: 'vessel-icon',
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
-          })
-        }).bindPopup(`
-          <b>${vessel.name}</b><br>
-          Type: ${vessel.type}<br>
-          Heading: ${vessel.heading}°<br>
-          Speed: ${vessel.speed} knots
-        `);
-        
-        layer.addLayer(marker);
-        
-        // Add vessel track
-        const trackLine = L.polyline([
-          vessel.pos,
-          [vessel.pos[0] - Math.sin(vessel.heading * Math.PI/180) * 0.01, 
-           vessel.pos[1] - Math.cos(vessel.heading * Math.PI/180) * 0.01]
-        ], {
-          color: '#FF5500',
-          weight: 2,
-          opacity: 0.7,
-          dashArray: '5, 5'
-        });
-        
-        layer.addLayer(trackLine);
-      });
-      
-      return layer;
-    }
-    
-    // Create weather layer
-    function createWeatherLayer() {
-      const layer = L.layerGroup();
-      
-      // Weather stations
-      const stations = [
-        { pos: [-32.030, 115.730], temp: 21, wind_speed: 15, wind_dir: 'NW', pressure: 1013 },
-        { pos: [-32.060, 115.700], temp: 20, wind_speed: 12, wind_dir: 'W', pressure: 1012 },
-        { pos: [-32.010, 115.760], temp: 22, wind_speed: 8, wind_dir: 'SW', pressure: 1014 }
-      ];
-      
-      // Add weather station markers
-      stations.forEach(station => {
-        const marker = L.marker(station.pos, {
-          icon: L.divIcon({
-            html: `<div style="font-size: 24px; color: #00AAFF;">🌤️</div>`,
-            className: 'weather-icon',
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
-          })
-        }).bindPopup(`
-          <b>Weather Station</b><br>
-          Temperature: ${station.temp}°C<br>
-          Wind: ${station.wind_speed} knots ${station.wind_dir}<br>
-          Pressure: ${station.pressure} hPa
-        `);
-        
-        layer.addLayer(marker);
-        
-        // Add wind direction arrows
-        const dirMap = {
-          'N': 0, 'NE': 45, 'E': 90, 'SE': 135,
-          'S': 180, 'SW': 225, 'W': 270, 'NW': 315
-        };
-        
-        const dir = dirMap[station.wind_dir] || 0;
-        
-        const arrow = L.marker(station.pos, {
-          icon: L.divIcon({
-            html: `<div style="font-size: 20px; transform: rotate(${dir}deg);">➡️</div>`,
-            className: 'wind-direction',
-            iconSize: [20, 20],
-            iconAnchor: [10, 30]
-          })
-        });
-        
-        layer.addLayer(arrow);
-      });
-      
-      // Create wind pattern grid
-      for (let lat = -32.01; lat >= -32.08; lat -= 0.02) {
-        for (let lng = 115.68; lng <= 115.78; lng += 0.02) {
-          const baseDir = 315; // NW base direction
-          const variation = Math.floor(Math.random() * 30) - 15;
-          const direction = baseDir + variation;
-          
-          const arrow = L.marker([lat, lng], {
-            icon: L.divIcon({
-              html: `<div style="font-size: 12px; color: #00AAFF; transform: rotate(${direction}deg);">➡️</div>`,
-              className: 'wind-pattern',
-              iconSize: [15, 15],
-              iconAnchor: [7.5, 7.5]
-            })
+          .catch(err => {
+            console.error(`Error loading ${key}:`, err);
+            showError(`Failed to load ${key}. Please try refreshing the page.`);
+            updateLayerLoadingState(key, false);
           });
-          
-          layer.addLayer(arrow);
-        }
+      });
+    
+    // Add the separate recommendedZones loading
+    loadPromises.push(loadRecommendedZones());
+
+    // Wait for all layers to load
+    await Promise.allSettled(loadPromises);
+    
+    // Initialize nautical features
+    await initNauticalFeatures(layerControl, nauticalOverlays);
+    
+    // Fit bounds after a short delay to ensure layers are rendered
+    setTimeout(() => { 
+      map.invalidateSize(); 
+      
+      // Fit to a predefined bounding box around Fremantle
+      map.fitBounds([
+        [-32.15, 115.65],  // Southwest
+        [-31.95, 115.85]   // Northeast
+      ]);
+    }, 200);
+  } catch (error) {
+    console.error('Map initialization error:', error);
+    showError(`Failed to initialize map: ${error.message}`);
+  } finally {
+    // Remove loading overlay when done
+    setTimeout(() => { 
+      document.getElementById('loadingOverlay').style.display = 'none'; 
+    }, 1000);
+  }
+}
+
+// Initialize nautical features (passing the layer control to add overlays)
+async function initNauticalFeatures(layerControl, nauticalOverlays) {
+  try {
+    document.getElementById('loadingMessage').textContent = 'Loading nautical features...';
+    
+    // Create sea marks layer
+    const seaMarksLayer = await createSeaMarksLayer();
+    if (seaMarksLayer) {
+      nauticalOverlays['Sea Marks'] = seaMarksLayer;
+      layerControl.addOverlay(seaMarksLayer, 'Sea Marks');
+      
+      // Add to map if checkbox is checked
+      const seaMarksCheckbox = document.getElementById('seaMarksCheckbox');
+      if (seaMarksCheckbox && seaMarksCheckbox.checked) {
+        seaMarksLayer.addTo(map);
       }
       
-      return layer;
-    }
-    
-    // Create navigational warnings layer
-    function createNavigationalWarningsLayer() {
-      const layer = L.layerGroup();
-      
-      // Warning areas
-      const warnings = [
-        { 
-          pos: [-32.040, 115.725], 
-          title: 'Navigation Hazard', 
-          details: 'Submerged object reported in this area. Exercise caution.',
-          type: 'hazard',
-          polygon: [
-            [-32.035, 115.720], [-32.030, 115.730], 
-            [-32.045, 115.735], [-32.050, 115.725]
-          ]
-        },
-        { 
-          pos: [-32.060, 115.760], 
-          title: 'Restricted Area', 
-          details: 'Naval exercise zone active from June 1-5. All vessels prohibited.',
-          type: 'restricted',
-          polygon: [
-            [-32.055, 115.755], [-32.050, 115.765], 
-            [-32.065, 115.770], [-32.070, 115.760]
-          ]
-        },
-        { 
-          pos: [-32.025, 115.695], 
-          title: 'Strong Currents', 
-          details: 'Strong tidal currents reported in this area. Small vessels use caution.',
-          type: 'current',
-          radius: 0.005
-        }
-      ];
-      
-      // Add warnings to the map
-      warnings.forEach(warning => {
-        // Warning marker
-        const marker = L.marker(warning.pos, {
-          icon: L.divIcon({
-            html: `<div style="font-size: 24px; color: #FF0000;">⚠️</div>`,
-            className: 'warning-icon',
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
-          })
-        }).bindPopup(`
-          <b>${warning.title}</b><br>
-          ${warning.details}
-        `);
-        
-        layer.addLayer(marker);
-        
-        // Warning area visualization
-        if (warning.polygon) {
-          const polygon = L.polygon(warning.polygon, {
-            color: '#FF0000',
-            weight: 2,
-            opacity: 0.6,
-            fillColor: '#FF0000',
-            fillOpacity: 0.1,
-            dashArray: '5, 5'
-          }).bindPopup(`
-            <b>${warning.title}</b><br>
-            ${warning.details}
-          `);
-          
-          layer.addLayer(polygon);
-        } else if (warning.radius) {
-          const circle = L.circle(warning.pos, {
-            radius: warning.radius * 111319.9, // Convert from degrees to meters (approx)
-            color: '#FF0000',
-            weight: 2,
-            opacity: 0.6,
-            fillColor: '#FF0000',
-            fillOpacity: 0.1,
-            dashArray: '5, 5'
-          }).bindPopup(`
-            <b>${warning.title}</b><br>
-            ${warning.details}
-          `);
-          
-          layer.addLayer(circle);
+      seaMarksCheckbox.addEventListener('change', function(e) {
+        if (e.target.checked) {
+          seaMarksLayer.addTo(map);
+        } else {
+          map.removeLayer(seaMarksLayer);
         }
       });
-      
-      return layer;
     }
     
     // Create bathymetry layer
-    function createBathymetryLayer() {
-      const layer = L.layerGroup();
-      
-      // Define depth contours
-      const depthContours = [
-        { depth: 5, color: '#77c3ec', points: [
-          [-32.045, 115.735], [-32.050, 115.745], [-32.060, 115.750], 
-          [-32.070, 115.745], [-32.075, 115.735], [-32.070, 115.725]
-        ]},
-        { depth: 10, color: '#5ba3d0', points: [
-          [-32.040, 115.730], [-32.045, 115.740], [-32.055, 115.745], 
-          [-32.065, 115.740], [-32.070, 115.730], [-32.065, 115.720]
-        ]},
-        { depth: 20, color: '#3d83b3', points: [
-          [-32.035, 115.725], [-32.040, 115.735], [-32.050, 115.740], 
-          [-32.060, 115.735], [-32.065, 115.725], [-32.060, 115.715]
-        ]},
-        { depth: 30, color: '#206397', points: [
-          [-32.030, 115.720], [-32.035, 115.730], [-32.045, 115.735], 
-          [-32.055, 115.730], [-32.060, 115.720], [-32.055, 115.710]
-        ]},
-        { depth: 50, color: '#0a4674', points: [
-          [-32.025, 115.715], [-32.030, 115.725], [-32.040, 115.730], 
-          [-32.050, 115.725], [-32.055, 115.715], [-32.050, 115.705]
-        ]}
-      ];
-      
-      // Add each contour
-      depthContours.forEach(contour => {
-        // Create contour line
-        const polyline = L.polyline(contour.points, {
-          color: contour.color,
-          weight: 2,
-          opacity: 0.8,
-          smoothFactor: 1
-        }).bindTooltip(`${contour.depth}m depth`, { sticky: true });
-        
-        layer.addLayer(polyline);
-        
-        // Add depth labels
-        contour.points.forEach((point, index) => {
-          if (index % 2 === 0) { // Add at every second point
-            const label = L.marker(point, {
-              icon: L.divIcon({
-                html: `<div style="color: ${contour.color}; font-size: 10px; font-weight: bold;">${contour.depth}m</div>`,
-                className: 'depth-label',
-                iconSize: [30, 10],
-                iconAnchor: [15, 5]
-              })
-            });
-            
-            layer.addLayer(label);
-          }
-        });
-        
-        // Create filled area
-        if (depthContours[depthContours.indexOf(contour) + 1]) {
-          const nextContour = depthContours[depthContours.indexOf(contour) + 1];
-          const combinedPoints = [...contour.points, ...nextContour.points.reverse(), contour.points[0]];
-          
-          const filledArea = L.polygon(combinedPoints, {
-            color: contour.color,
-            weight: 0.5,
-            fillColor: contour.color,
-            fillOpacity: 0.1,
-            opacity: 0.5
-          });
-          
-          layer.addLayer(filledArea);
+    const bathymetryLayer = createBathymetryLayer();
+    nauticalOverlays['Bathymetry'] = bathymetryLayer;
+    layerControl.addOverlay(bathymetryLayer, 'Bathymetry (Depth Contours)');
+    
+    // Add bathymetry by default if checkbox is checked
+    const bathymetryCheckbox = document.getElementById('bathymetryCheckbox');
+    if (bathymetryCheckbox && bathymetryCheckbox.checked) {
+      bathymetryLayer.addTo(map);
+    }
+    
+    bathymetryCheckbox.addEventListener('change', function(e) {
+      if (e.target.checked) {
+        bathymetryLayer.addTo(map);
+      } else {
+        map.removeLayer(bathymetryLayer);
+      }
+    });
+    
+    // Create marine traffic layer
+    const marineTrafficLayer = createMarineTrafficLayer();
+    nauticalOverlays['Marine Traffic'] = marineTrafficLayer;
+    layerControl.addOverlay(marineTrafficLayer, 'Marine Traffic (AIS)');
+    
+    // Bind to checkbox
+    const marineTrafficCheckbox = document.getElementById('marineTrafficCheckbox');
+    if (marineTrafficCheckbox) {
+      marineTrafficCheckbox.addEventListener('change', function(e) {
+        if (e.target.checked) {
+          marineTrafficLayer.addTo(map);
+        } else {
+          map.removeLayer(marineTrafficLayer);
         }
       });
-      
-      return layer;
+    }
+    
+    // Create weather layer
+    const weatherLayer = createWeatherLayer();
+    nauticalOverlays['Weather'] = weatherLayer;
+    layerControl.addOverlay(weatherLayer, 'Weather & Wind');
+    
+    // Bind to checkbox
+    const weatherCheckbox = document.getElementById('weatherCheckbox');
+    if (weatherCheckbox) {
+      weatherCheckbox.addEventListener('change', function(e) {
+        if (e.target.checked) {
+          weatherLayer.addTo(map);
+        } else {
+          map.removeLayer(weatherLayer);
+        }
+      });
+    }
+    
+    // Create navigational warnings layer
+    const navWarningsLayer = createNavigationalWarningsLayer();
+    nauticalOverlays['Navigational Warnings'] = navWarningsLayer;
+    layerControl.addOverlay(navWarningsLayer, 'Navigational Warnings');
+    
+    // Bind to checkbox
+    const navWarningsCheckbox = document.getElementById('navigationalWarningsCheckbox');
+    if (navWarningsCheckbox) {
+      navWarningsCheckbox.addEventListener('change', function(e) {
+        if (e.target.checked) {
+          navWarningsLayer.addTo(map);
+        } else {
+          map.removeLayer(navWarningsLayer);
+        }
+      });
     }
     
     // Add compass rose
-    function addCompassRose() {
-      const compassRose = L.control({position: 'bottomleft'});
-      
-      compassRose.onAdd = function(map) {
-        const div = L.DomUtil.create('div', 'compass-rose');
-        div.innerHTML = `
-          <svg width="100" height="100" viewBox="0 0 100 100">
-            <circle cx="50" cy="50" r="45" fill="white" fill-opacity="0.7" stroke="#333" stroke-width="1" />
-            <path d="M50,5 L55,45 L50,50 L45,45 Z" fill="#D32F2F" stroke="#333" stroke-width="0.5" />
-            <path d="M50,95 L55,55 L50,50 L45,55 Z" fill="#333" stroke="#333" stroke-width="0.5" />
-            <path d="M5,50 L45,45 L50,50 L45,55 Z" fill="#333" stroke="#333" stroke-width="0.5" />
-            <path d="M95,50 L55,45 L50,50 L55,55 Z" fill="#333" stroke="#333" stroke-width="0.5" />
-            <text x="50" y="20" text-anchor="middle" font-size="12" font-weight="bold">N</text>
-            <text x="50" y="85" text-anchor="middle" font-size="12" font-weight="bold">S</text>
-            <text x="85" y="52" text-anchor="middle" font-size="12" font-weight="bold">E</text>
-            <text x="15" y="52" text-anchor="middle" font-size="12" font-weight="bold">W</text>
-          </svg>
-        `;
-        return div;
-      };
-      
-      compassRose.addTo(map);
-    }
+    addCompassRose();
     
-    // Initialize the map when the page loads
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initMap);
-    } else {
-      initMap();
+    // Update loading state for seamark checkbox
+    updateLayerLoadingState('seaMarks', false);
+    
+    return true;
+  } catch (error) {
+    console.error('Failed to initialize nautical features:', error);
+    showError('Some nautical features failed to load. You can refresh to try again.');
+    
+    // Update loading states
+    updateLayerLoadingState('seaMarks', false);
+    
+    return false;
+  }
+}
+
+// Functions for creating other nautical layers remain unchanged
+function createMarineTrafficLayer() {
+  const layer = L.layerGroup();
+  
+  // Sample vessel data
+  const vessels = [
+    { pos: [-32.025, 115.710], name: 'Cargo Vessel', type: 'cargo', heading: 45, speed: 12, icon: '🚢' },
+    { pos: [-32.040, 115.690], name: 'Oil Tanker', type: 'tanker', heading: 180, speed: 8, icon: '🛳️' },
+    { pos: [-32.055, 115.705], name: 'Passenger Ferry', type: 'passenger', heading: 270, speed: 15, icon: '🚢' },
+    { pos: [-32.035, 115.725], name: 'Fishing Vessel', type: 'fishing', heading: 90, speed: 5, icon: '🚣' },
+    { pos: [-32.015, 115.745], name: 'Navy Vessel', type: 'military', heading: 135, speed: 18, icon: '⚓' }
+  ];
+  
+  // Add vessel markers
+  vessels.forEach(vessel => {
+    const marker = L.marker(vessel.pos, {
+      icon: L.divIcon({
+        html: `<div style="font-size: 20px; transform: rotate(${vessel.heading}deg);">${vessel.icon}</div>`,
+        className: 'vessel-icon',
+        iconSize: [30, 30],
+        iconAnchor: [15, 15]
+      })
+    }).bindPopup(`
+      <b>${vessel.name}</b><br>
+      Type: ${vessel.type}<br>
+      Heading: ${vessel.heading}°<br>
+      Speed: ${vessel.speed} knots
+    `);
+    
+    layer.addLayer(marker);
+    
+    // Add vessel track
+    const trackLine = L.polyline([
+      vessel.pos,
+      [vessel.pos[0] - Math.sin(vessel.heading * Math.PI/180) * 0.01, 
+       vessel.pos[1] - Math.cos(vessel.heading * Math.PI/180) * 0.01]
+    ], {
+      color: '#FF5500',
+      weight: 2,
+      opacity: 0.7,
+      dashArray: '5, 5'
+    });
+    
+    layer.addLayer(trackLine);
+  });
+  
+  return layer;
+}
+
+function createWeatherLayer() {
+  const layer = L.layerGroup();
+  
+  // Weather stations
+  const stations = [
+    { pos: [-32.030, 115.730], temp: 21, wind_speed: 15, wind_dir: 'NW', pressure: 1013 },
+    { pos: [-32.060, 115.700], temp: 20, wind_speed: 12, wind_dir: 'W', pressure: 1012 },
+    { pos: [-32.010, 115.760], temp: 22, wind_speed: 8, wind_dir: 'SW', pressure: 1014 }
+  ];
+  
+  // Add weather station markers
+  stations.forEach(station => {
+    const marker = L.marker(station.pos, {
+      icon: L.divIcon({
+        html: `<div style="font-size: 24px; color: #00AAFF;">🌤️</div>`,
+        className: 'weather-icon',
+        iconSize: [30, 30],
+        iconAnchor: [15, 15]
+      })
+    }).bindPopup(`
+      <b>Weather Station</b><br>
+      Temperature: ${station.temp}°C<br>
+      Wind: ${station.wind_speed} knots ${station.wind_dir}<br>
+      Pressure: ${station.pressure} hPa
+    `);
+    
+    layer.addLayer(marker);
+    
+    // Add wind direction arrows
+    const dirMap = {
+      'N': 0, 'NE': 45, 'E': 90, 'SE': 135,
+      'S': 180, 'SW': 225, 'W': 270, 'NW': 315
+    };
+    
+    const dir = dirMap[station.wind_dir] || 0;
+    
+    const arrow = L.marker(station.pos, {
+      icon: L.divIcon({
+        html: `<div style="font-size: 20px; transform: rotate(${dir}deg);">➡️</div>`,
+        className: 'wind-direction',
+        iconSize: [20, 20],
+        iconAnchor: [10, 30]
+      })
+    });
+    
+    layer.addLayer(arrow);
+  });
+  
+  // Create wind pattern grid
+  for (let lat = -32.01; lat >= -32.08; lat -= 0.02) {
+    for (let lng = 115.68; lng <= 115.78; lng += 0.02) {
+      const baseDir = 315; // NW base direction
+      const variation = Math.floor(Math.random() * 30) - 15;
+      const direction = baseDir + variation;
+      
+      const arrow = L.marker([lat, lng], {
+        icon: L.divIcon({
+          html: `<div style="font-size: 12px; color: #00AAFF; transform: rotate(${direction}deg);">➡️</div>`,
+          className: 'wind-pattern',
+          iconSize: [15, 15],
+          iconAnchor: [7.5, 7.5]
+        })
+      });
+      
+      layer.addLayer(arrow);
     }
+  }
+  
+  return layer;
+}
+
+function createNavigationalWarningsLayer() {
+  const layer = L.layerGroup();
+  
+  // Warning areas
+  const warnings = [
+    { 
+      pos: [-32.040, 115.725], 
+      title: 'Navigation Hazard', 
+      details: 'Submerged object reported in this area. Exercise caution.',
+      type: 'hazard',
+      polygon: [
+        [-32.035, 115.720], [-32.030, 115.730], 
+        [-32.045, 115.735], [-32.050, 115.725],
+        [-32.035, 115.720] // Close the polygon properly
+      ]
+    },
+    { 
+      pos: [-32.060, 115.760], 
+      title: 'Restricted Area', 
+      details: 'Naval exercise zone active from June 1-5. All vessels prohibited.',
+      type: 'restricted',
+      polygon: [
+        [-32.055, 115.755], [-32.050, 115.765], 
+        [-32.065, 115.770], [-32.070, 115.760],
+        [-32.055, 115.755] // Close the polygon properly
+      ]
+    },
+    { 
+      pos: [-32.025, 115.695], 
+      title: 'Strong Currents', 
+      details: 'Strong tidal currents reported in this area. Small vessels use caution.',
+      type: 'current',
+      radius: 0.005
+    }
+  ];
+  
+  // Add warnings to the map
+  warnings.forEach(warning => {
+    // Warning marker
+    const marker = L.marker(warning.pos, {
+      icon: L.divIcon({
+        html: `<div style="font-size: 24px; color: #FF0000;">⚠️</div>`,
+        className: 'warning-icon',
+        iconSize: [30, 30],
+        iconAnchor: [15, 15]
+      })
+    }).bindPopup(`
+      <b>${warning.title}</b><br>
+      ${warning.details}
+    `);
+    
+    layer.addLayer(marker);
+    
+    // Warning area visualization
+    if (warning.polygon) {
+      const polygon = L.polygon(warning.polygon, {
+        color: '#FF0000',
+        weight: 2,
+        opacity: 0.6,
+        fillColor: '#FF0000',
+        fillOpacity: 0.1,
+        dashArray: '5, 5'
+      }).bindPopup(`
+        <b>${warning.title}</b><br>
+        ${warning.details}
+      `);
+      
+      layer.addLayer(polygon);
+    } else if (warning.radius) {
+      const circle = L.circle(warning.pos, {
+        radius: warning.radius * 111319.9, // Convert from degrees to meters (approx)
+        color: '#FF0000',
+        weight: 2,
+        opacity: 0.6,
+        fillColor: '#FF0000',
+        fillOpacity: 0.1,
+        dashArray: '5, 5'
+      }).bindPopup(`
+        <b>${warning.title}</b><br>
+        ${warning.details}
+      `);
+      
+      layer.addLayer(circle);
+    }
+  });
+  
+  return layer;
+}
+
+function addCompassRose() {
+  const compassRose = L.control({position: 'bottomleft'});
+  
+  compassRose.onAdd = function(map) {
+    const div = L.DomUtil.create('div', 'compass-rose');
+    div.innerHTML = `
+      <svg width="100" height="100" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="45" fill="white" fill-opacity="0.7" stroke="#333" stroke-width="1" />
+        <path d="M50,5 L55,45 L50,50 L45,45 Z" fill="#D32F2F" stroke="#333" stroke-width="0.5" />
+        <path d="M50,95 L55,55 L50,50 L45,55 Z" fill="#333" stroke="#333" stroke-width="0.5" />
+        <path d="M5,50 L45,45 L50,50 L45,55 Z" fill="#333" stroke="#333" stroke-width="0.5" />
+        <path d="M95,50 L55,45 L50,50 L55,55 Z" fill="#333" stroke="#333" stroke-width="0.5" />
+        <text x="50" y="20" text-anchor="middle" font-size="12" font-weight="bold">N</text>
+        <text x="50" y="85" text-anchor="middle" font-size="12" font-weight="bold">S</text>
+        <text x="85" y="52" text-anchor="middle" font-size="12" font-weight="bold">E</text>
+        <text x="15" y="52" text-anchor="middle" font-size="12" font-weight="bold">W</text>
+      </svg>
+    `;
+    return div;
+  };
+  
+  compassRose.addTo(map);
+}
+
+// Initialize the map when the page loads
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initMap);
+} else {
+  initMap();
+}
   </script>
 </body>
 </html>
