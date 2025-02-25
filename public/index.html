@@ -490,9 +490,12 @@
       }
     }
     
-    // Modified fetch function for layer data
+    // Modified fetch function with retry logic and timeout control
     async function fetchLayerData(url, key) {
       try {
+        // Special handling for recommendedZones which can be slow to calculate
+        const isRecommendedZones = key === 'recommendedZones';
+        
         // Determine the correct URL to fetch from
         const fetchUrl = url.startsWith('http') 
           ? url // Use the full URL if it's already absolute
@@ -500,13 +503,95 @@
         
         console.log(`Fetching data from: ${fetchUrl}`);
         
-        const response = await fetch(fetchUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to load ${key}: ${response.statusText}`);
+        // Set longer timeout for recommendedZones
+        const timeoutDuration = isRecommendedZones ? 30000 : 15000; // 30 seconds for zones, 15 for others
+        
+        // Create an AbortController to handle timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutDuration);
+        
+        try {
+          // Try with a higher timeout for recommendedZones
+          const response = await fetch(fetchUrl, {
+            signal: controller.signal
+          });
+          
+          clearTimeout(timeoutId);
+          
+          if (!response.ok) {
+            throw new Error(`Failed to load ${key}: ${response.statusText}`);
+          }
+          
+          const data = await response.json();
+          return data;
+        } catch (fetchError) {
+          // For recommendedZones, create a fallback if it fails
+          if (isRecommendedZones) {
+            console.warn(`Using fallback for ${key}: ${fetchError.message}`);
+            
+            // Return a simple fallback zone
+            return {
+              type: 'FeatureCollection',
+              features: [
+                {
+                  type: 'Feature',
+                  properties: {
+                    type: 'Potential Cleaning Zone (Client Fallback)',
+                    description: 'Fallback cleaning zone - could not reach server'
+                  },
+                  geometry: {
+                    type: 'Polygon',
+                    coordinates: [
+                      [
+                        [115.65, -32.02],
+                        [115.68, -32.02],
+                        [115.68, -31.98],
+                        [115.65, -31.98],
+                        [115.65, -32.02]
+                      ]
+                    ]
+                  }
+                }
+              ]
+            };
+          } else {
+            // For other layers, rethrow the error
+            throw fetchError;
+          }
         }
-        return await response.json();
       } catch (error) {
         console.error(`Error fetching ${key}:`, error);
+        
+        // For recommendedZones, always provide a fallback
+        if (key === 'recommendedZones') {
+          console.warn(`Using emergency fallback for ${key}`);
+          return {
+            type: 'FeatureCollection',
+            features: [
+              {
+                type: 'Feature',
+                properties: {
+                  type: 'Potential Cleaning Zone (Fallback)',
+                  description: 'Emergency fallback zone'
+                },
+                geometry: {
+                  type: 'Polygon',
+                  coordinates: [
+                    [
+                      [115.65, -32.02],
+                      [115.68, -32.02],
+                      [115.68, -31.98],
+                      [115.65, -31.98],
+                      [115.65, -32.02]
+                    ]
+                  ]
+                }
+              }
+            ]
+          };
+        }
+        
+        // For other layers, rethrow
         throw error;
       }
     }
@@ -700,6 +785,114 @@
       container.style.display = 'block';
     }
     
+    // Use this function to update the GeoJSON data in the recommendedZones layer
+    function updateRecommendedZonesLayer(geojson) {
+      try {
+        if (govLayers.recommendedZones.layer) {
+          map.removeLayer(govLayers.recommendedZones.layer);
+        }
+        
+        govLayers.recommendedZones.layer = L.geoJSON(geojson, {
+          style: govLayers.recommendedZones.style,
+          onEachFeature: (feature, layer) => {
+            if (feature.properties) {
+              let popupContent = '';
+              if (feature.properties.description && feature.properties.description.includes('Fallback')) {
+                // Add a note about fallback data
+                popupContent = '<strong>Note:</strong> Using simplified zone data. The server could not calculate detailed zones.<br><br>';
+              }
+              
+              popupContent += Object.entries(feature.properties)
+                .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
+                .join('<br>');
+                
+              layer.bindPopup(popupContent);
+            }
+          }
+        }).addTo(map);
+        
+        // Ensure clicks on layer features trigger the confirmation modal
+        govLayers.recommendedZones.layer.on('click', function(e) {
+          // Prevent default behavior and propagate our custom event
+          L.DomEvent.stopPropagation(e);
+          
+          // Store clicked location
+          tempClickLocation = e.latlng;
+          
+          // Show confirmation modal
+          document.getElementById('confirmationModal').style.display = 'block';
+        });
+        
+        // Update the checkbox
+        const checkbox = document.getElementById('recommendedZonesCheckbox');
+        if (checkbox) {
+          checkbox.checked = true; // Make sure checkbox is checked since we just added the layer
+          
+          checkbox.addEventListener('change', function(e) {
+            if (e.target.checked) {
+              map.addLayer(govLayers.recommendedZones.layer);
+            } else {
+              map.removeLayer(govLayers.recommendedZones.layer);
+            }
+          });
+        }
+        
+        // Update loading state
+        updateLayerLoadingState('recommendedZones', false);
+        
+        return true;
+      } catch (error) {
+        console.error('Error updating recommendedZones layer:', error);
+        updateLayerLoadingState('recommendedZones', false);
+        return false;
+      }
+    }
+    
+    // Special function to load recommendedZones
+    function loadRecommendedZones() {
+      updateLayerLoadingState('recommendedZones', true);
+      document.getElementById('loadingMessage').textContent = 'Loading potential cleaning zones...';
+      
+      return fetchLayerData(govLayers.recommendedZones.url, 'recommendedZones')
+        .then(geojson => {
+          // Update the layer with the received data
+          return updateRecommendedZonesLayer(geojson);
+        })
+        .catch(err => {
+          console.error(`Error loading recommendedZones:`, err);
+          showError(`Showing simplified cleaning zones. Detailed zones unavailable.`);
+          
+          // Create a simple fallback
+          const fallbackGeoJSON = {
+            type: 'FeatureCollection',
+            features: [
+              {
+                type: 'Feature',
+                properties: {
+                  type: 'Potential Cleaning Zone (Fallback)',
+                  description: 'Simplified cleaning zone - detailed calculation unavailable'
+                },
+                geometry: {
+                  type: 'Polygon',
+                  coordinates: [
+                    [
+                      [115.65, -32.02],
+                      [115.68, -32.02],
+                      [115.68, -31.98],
+                      [115.65, -31.98],
+                      [115.65, -32.02]
+                    ]
+                  ]
+                }
+              }
+            ]
+          };
+          
+          // Update the layer with fallback data
+          return updateRecommendedZonesLayer(fallbackGeoJSON);
+        });
+    }
+    
     async function initMap() {
       try {
         // Create map centered over Fremantle
@@ -821,57 +1014,6 @@
           }
         });
         
-        // Load all government layers in parallel
-        const loadPromises = Object.keys(govLayers).map(key => {
-          updateLayerLoadingState(key, true);
-          document.getElementById('loadingMessage').textContent = `Loading ${key.replace(/([A-Z])/g, ' $1').toLowerCase()}...`;
-          
-          return fetchLayerData(govLayers[key].url, key)
-            .then(geojson => {
-              govLayers[key].layer = L.geoJSON(geojson, {
-                style: govLayers[key].style,
-                onEachFeature: (feature, layer) => {
-                  if (feature.properties) {
-                    const popupContent = Object.entries(feature.properties)
-                      .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
-                      .join('<br>');
-                    layer.bindPopup(popupContent);
-                  }
-                }
-              }).addTo(map);
-              
-              // Ensure clicks on layer features also trigger the confirmation modal
-              govLayers[key].layer.on('click', function(e) {
-                // Prevent default behavior and propagate our custom event
-                L.DomEvent.stopPropagation(e);
-                
-                // Store clicked location
-                tempClickLocation = e.latlng;
-                
-                // Show confirmation modal
-                document.getElementById('confirmationModal').style.display = 'block';
-              });
-              
-              const checkbox = document.getElementById(key + 'Checkbox');
-              if (checkbox) {
-                checkbox.addEventListener('change', function(e) {
-                  if (e.target.checked) {
-                    map.addLayer(govLayers[key].layer);
-                  } else {
-                    map.removeLayer(govLayers[key].layer);
-                  }
-                });
-              }
-              
-              updateLayerLoadingState(key, false);
-            })
-            .catch(err => {
-              console.error(`Error loading ${key}:`, err);
-              showError(`Failed to load ${key}. Please try refreshing the page.`);
-              updateLayerLoadingState(key, false);
-            });
-        });
-        
         // Analysis panel close button
         document.getElementById('analysisClose').addEventListener('click', function() {
           document.getElementById('analysisContainer').style.display = 'none';
@@ -883,7 +1025,63 @@
           }
         });
 
-        // Wait for all government layers to load
+        // Load all government layers in parallel except recommendedZones
+        const loadPromises = Object.keys(govLayers)
+          .filter(key => key !== 'recommendedZones') // Handle recommendedZones separately
+          .map(key => {
+            updateLayerLoadingState(key, true);
+            document.getElementById('loadingMessage').textContent = `Loading ${key.replace(/([A-Z])/g, ' $1').toLowerCase()}...`;
+            
+            return fetchLayerData(govLayers[key].url, key)
+              .then(geojson => {
+                govLayers[key].layer = L.geoJSON(geojson, {
+                  style: govLayers[key].style,
+                  onEachFeature: (feature, layer) => {
+                    if (feature.properties) {
+                      const popupContent = Object.entries(feature.properties)
+                        .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
+                        .join('<br>');
+                      layer.bindPopup(popupContent);
+                    }
+                  }
+                }).addTo(map);
+                
+                // Ensure clicks on layer features also trigger the confirmation modal
+                govLayers[key].layer.on('click', function(e) {
+                  // Prevent default behavior and propagate our custom event
+                  L.DomEvent.stopPropagation(e);
+                  
+                  // Store clicked location
+                  tempClickLocation = e.latlng;
+                  
+                  // Show confirmation modal
+                  document.getElementById('confirmationModal').style.display = 'block';
+                });
+                
+                const checkbox = document.getElementById(key + 'Checkbox');
+                if (checkbox) {
+                  checkbox.addEventListener('change', function(e) {
+                    if (e.target.checked) {
+                      map.addLayer(govLayers[key].layer);
+                    } else {
+                      map.removeLayer(govLayers[key].layer);
+                    }
+                  });
+                }
+                
+                updateLayerLoadingState(key, false);
+              })
+              .catch(err => {
+                console.error(`Error loading ${key}:`, err);
+                showError(`Failed to load ${key}. Please try refreshing the page.`);
+                updateLayerLoadingState(key, false);
+              });
+          });
+        
+        // Add the separate recommendedZones loading
+        loadPromises.push(loadRecommendedZones());
+
+        // Wait for all layers to load
         await Promise.allSettled(loadPromises);
         
         // Initialize nautical features
