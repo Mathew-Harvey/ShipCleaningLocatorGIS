@@ -430,11 +430,30 @@
   <!-- Use CDN for Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js" crossorigin=""></script>
   <script>
+    // ===== CONFIGURATION FOR DEPLOYMENT =====
+    // API configuration with real server URL
+    const API_CONFIG = {
+      // For local development:
+      local: 'http://localhost:3000',
+      
+      // For production deployment (your deployed server):
+      production: 'https://shipcleaninggis-server.onrender.com', 
+      
+      // Fallback mode - set to false to use the real API
+      mockMode: false
+    };
+
+    // Determine which API base URL to use
+    const apiBaseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+      ? API_CONFIG.local 
+      : API_CONFIG.production;
+
+    console.log("Using API server at:", apiBaseUrl);
+
     // Application state
     let map;
     let currentMarker = null;
     let tempClickLocation = null;
-    const apiBaseUrl = window.location.origin;
     const layerColors = {
       portAuthorities: '#FF4081',
       marineParks: '#4CAF50',
@@ -471,7 +490,28 @@
       }
     }
     
-    // Function to perform location analysis
+    // Modified fetch function for layer data
+    async function fetchLayerData(url, key) {
+      try {
+        // Determine the correct URL to fetch from
+        const fetchUrl = url.startsWith('http') 
+          ? url // Use the full URL if it's already absolute
+          : `${apiBaseUrl}${url.startsWith('/') ? '' : '/'}${url}`; // Otherwise prepend the base URL
+        
+        console.log(`Fetching data from: ${fetchUrl}`);
+        
+        const response = await fetch(fetchUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to load ${key}: ${response.statusText}`);
+        }
+        return await response.json();
+      } catch (error) {
+        console.error(`Error fetching ${key}:`, error);
+        throw error;
+      }
+    }
+    
+    // Function to perform location analysis - updated for deployed server
     async function analyzeLocation(lat, lng) {
       try {
         document.getElementById('loadingMessage').textContent = 'Analyzing location...';
@@ -494,7 +534,10 @@
         currentMarker = L.marker([lat, lng], { icon: icon }).addTo(map);
         
         // Make API call to the backend for analysis
-        const response = await fetch(`${apiBaseUrl}/api/analyzeProximity`, {
+        const analyzeUrl = `${apiBaseUrl}/api/analyzeProximity`;
+        console.log(`Sending analysis request to: ${analyzeUrl}`);
+        
+        const response = await fetch(analyzeUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -783,13 +826,7 @@
           updateLayerLoadingState(key, true);
           document.getElementById('loadingMessage').textContent = `Loading ${key.replace(/([A-Z])/g, ' $1').toLowerCase()}...`;
           
-          return fetch(govLayers[key].url)
-            .then(response => {
-              if (!response.ok) {
-                throw new Error(`Failed to load ${key}: ${response.statusText}`);
-              }
-              return response.json();
-            })
+          return fetchLayerData(govLayers[key].url, key)
             .then(geojson => {
               govLayers[key].layer = L.geoJSON(geojson, {
                 style: govLayers[key].style,
@@ -830,7 +867,7 @@
             })
             .catch(err => {
               console.error(`Error loading ${key}:`, err);
-              showError(`Failed to load ${key}: ${err.message}`);
+              showError(`Failed to load ${key}. Please try refreshing the page.`);
               updateLayerLoadingState(key, false);
             });
         });
