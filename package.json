@@ -1,9 +1,23 @@
 {
+  "name": "hull-cleaning-map",
+  "version": "1.0.0",
+  "description": "Interactive map showing constraints for in-water hull cleaning",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
   "dependencies": {
+    "@turf/turf": "^6.5.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "leaflet": "^1.9.4",
-    "node-fetch": "^2.7.0"
+    "express": "^4.18.2",
+    "node-cache": "^5.1.2",
+    "node-fetch": "^2.6.7"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  },
+  "engines": {
+    "node": ">=14.0.0"
   }
 }
