@@ -311,6 +311,7 @@ const NAUTICAL_REFERENCES = {
 };
 
 // New endpoint to calculate potential cleaning zones
+// Replace the existing recommendedZones endpoint with this optimized version
 app.get('/api/recommendedZones', async (req, res) => {
   try {
     // Check cache first
@@ -323,122 +324,232 @@ app.get('/api/recommendedZones', async (req, res) => {
     }
     
     console.log('Calculating potential cleaning zones...');
-    const explorer = new APIExplorer({ 
-      delayBetweenRequests: 500,
-      timeout: 15000,
-      maxRetries: 3
+    
+    // Set a timeout for this computation-heavy operation
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Calculation timed out')), 25000); // 25 second timeout
     });
     
-    // Fetch all constraint layers
-    const constraints = {};
-    for (const [key, url] of Object.entries(ENDPOINTS)) {
-      try {
-        constraints[key] = await explorer.fetchGeoJSON(url);
-      } catch (error) {
-        console.error(`Failed to fetch ${key}: ${error.message}`);
-        // Continue with other constraints if one fails
+    // Create the actual calculation promise
+    const calculationPromise = (async () => {
+      const explorer = new APIExplorer({ 
+        delayBetweenRequests: 500,
+        timeout: 15000,
+        maxRetries: 3
+      });
+      
+      // Fetch all constraint layers
+      const constraints = {};
+      for (const [key, url] of Object.entries(ENDPOINTS)) {
+        try {
+          constraints[key] = await explorer.fetchGeoJSON(url);
+        } catch (error) {
+          console.error(`Failed to fetch ${key}: ${error.message}`);
+          // Continue with other constraints if one fails
+        }
       }
-    }
-    
-    // Merge all constraint polygons
-    let allConstraints = {
-      type: 'FeatureCollection',
-      features: []
-    };
-    
-    // Process each layer
-    Object.entries(constraints).forEach(([key, layer]) => {
-      if (layer && layer.features) {
-        console.log(`Processing ${key}: ${layer.features.length} features`);
-        
-        // Add only valid polygon features
-        const validPolygons = layer.features.filter(feature => {
-          try {
-            if (!feature || !feature.geometry) return false;
-            
-            // Only include polygons and multipolygons
-            if (feature.geometry.type !== 'Polygon' && 
-                feature.geometry.type !== 'MultiPolygon') {
+      
+      // Merge all constraint polygons
+      let allConstraints = {
+        type: 'FeatureCollection',
+        features: []
+      };
+      
+      // Process each layer
+      Object.entries(constraints).forEach(([key, layer]) => {
+        if (layer && layer.features) {
+          console.log(`Processing ${key}: ${layer.features.length} features`);
+          
+          // Add only valid polygon features
+          const validPolygons = layer.features.filter(feature => {
+            try {
+              if (!feature || !feature.geometry) return false;
+              
+              // Only include polygons and multipolygons
+              if (feature.geometry.type !== 'Polygon' && 
+                  feature.geometry.type !== 'MultiPolygon') {
+                return false;
+              }
+              
+              // For polygons, validate coordinate structure
+              if (feature.geometry.type === 'Polygon') {
+                return Array.isArray(feature.geometry.coordinates) && 
+                      feature.geometry.coordinates.length > 0 &&
+                      Array.isArray(feature.geometry.coordinates[0]) &&
+                      feature.geometry.coordinates[0].length >= 4;
+              }
+              
+              // For multipolygons, validate coordinate structure
+              if (feature.geometry.type === 'MultiPolygon') {
+                return Array.isArray(feature.geometry.coordinates) && 
+                      feature.geometry.coordinates.length > 0 &&
+                      Array.isArray(feature.geometry.coordinates[0]) &&
+                      feature.geometry.coordinates[0].length > 0 &&
+                      Array.isArray(feature.geometry.coordinates[0][0]) &&
+                      feature.geometry.coordinates[0][0].length >= 4;
+              }
+              
+              return false;
+            } catch (e) {
+              console.warn(`Invalid feature in ${key}:`, e.message);
               return false;
             }
-            
-            // For polygons, validate coordinate structure
-            if (feature.geometry.type === 'Polygon') {
-              return Array.isArray(feature.geometry.coordinates) && 
-                    feature.geometry.coordinates.length > 0 &&
-                    Array.isArray(feature.geometry.coordinates[0]) &&
-                    feature.geometry.coordinates[0].length >= 4;
-            }
-            
-            // For multipolygons, validate coordinate structure
-            if (feature.geometry.type === 'MultiPolygon') {
-              return Array.isArray(feature.geometry.coordinates) && 
-                    feature.geometry.coordinates.length > 0 &&
-                    Array.isArray(feature.geometry.coordinates[0]) &&
-                    feature.geometry.coordinates[0].length > 0 &&
-                    Array.isArray(feature.geometry.coordinates[0][0]) &&
-                    feature.geometry.coordinates[0][0].length >= 4;
-            }
-            
-            return false;
-          } catch (e) {
-            console.warn(`Invalid feature in ${key}:`, e.message);
-            return false;
-          }
-        });
-        
-        console.log(`Found ${validPolygons.length} valid polygons in ${key}`);
-        allConstraints.features.push(...validPolygons);
-      }
-    });
-    
-    // Union all constraint polygons if we have any
-    let constraintUnion = null;
-    
-    if (allConstraints.features.length > 0) {
-      try {
-        console.log(`Unioning ${allConstraints.features.length} constraint features...`);
-        
-        // Process features in smaller batches to avoid memory issues
-        const BATCH_SIZE = 10;
-        let batchResults = [];
-        
-        // Process features in batches
-        for (let i = 0; i < allConstraints.features.length; i += BATCH_SIZE) {
-          const batch = allConstraints.features.slice(i, i + BATCH_SIZE);
-          console.log(`Processing batch ${i/BATCH_SIZE + 1}/${Math.ceil(allConstraints.features.length/BATCH_SIZE)}`);
+          });
           
-          let batchUnion = null;
-          for (const feature of batch) {
-            try {
-              if (!batchUnion) {
-                batchUnion = feature;
-              } else {
-                batchUnion = turf.union(batchUnion, feature);
+          console.log(`Found ${validPolygons.length} valid polygons in ${key}`);
+          allConstraints.features.push(...validPolygons);
+        }
+      });
+      
+      // Union all constraint polygons if we have any
+      let constraintUnion = null;
+      
+      if (allConstraints.features.length > 0) {
+        try {
+          console.log(`Unioning ${allConstraints.features.length} constraint features...`);
+          
+          // Process features in smaller batches to avoid memory issues
+          const BATCH_SIZE = 10;
+          let batchResults = [];
+          
+          // Process features in batches
+          for (let i = 0; i < allConstraints.features.length; i += BATCH_SIZE) {
+            const batch = allConstraints.features.slice(i, i + BATCH_SIZE);
+            console.log(`Processing batch ${i/BATCH_SIZE + 1}/${Math.ceil(allConstraints.features.length/BATCH_SIZE)}`);
+            
+            let batchUnion = null;
+            for (const feature of batch) {
+              try {
+                if (!batchUnion) {
+                  batchUnion = feature;
+                } else {
+                  batchUnion = turf.union(batchUnion, feature);
+                }
+              } catch (e) {
+                console.warn(`Union failed for a feature in batch, skipping:`, e.message);
               }
-            } catch (e) {
-              console.warn(`Union failed for a feature in batch, skipping:`, e.message);
+            }
+            
+            if (batchUnion) {
+              batchResults.push(batchUnion);
             }
           }
           
-          if (batchUnion) {
-            batchResults.push(batchUnion);
+          // Union the batch results
+          constraintUnion = batchResults[0];
+          for (let i = 1; i < batchResults.length; i++) {
+            try {
+              constraintUnion = turf.union(constraintUnion, batchResults[i]);
+            } catch (e) {
+              console.warn(`Union failed for batch result ${i}, skipping:`, e.message);
+            }
           }
+        } catch (error) {
+          console.error('Error in turf.union:', error);
         }
-        
-        // Union the batch results
-        constraintUnion = batchResults[0];
-        for (let i = 1; i < batchResults.length; i++) {
-          try {
-            constraintUnion = turf.union(constraintUnion, batchResults[i]);
-          } catch (e) {
-            console.warn(`Union failed for batch result ${i}, skipping:`, e.message);
-          }
-        }
-      } catch (error) {
-        console.error('Error in turf.union:', error);
       }
-    }
+      
+      // Calculate the difference between the study area and constraints
+      let potentialZones;
+      
+      if (constraintUnion) {
+        try {
+          console.log('Calculating difference between study area and constraints...');
+          potentialZones = turf.difference(STUDY_AREA, constraintUnion);
+        } catch (error) {
+          console.error('Error calculating difference:', error);
+          potentialZones = STUDY_AREA; // Default to study area if calculation fails
+        }
+      } else {
+        console.log('No valid constraints, using entire study area');
+        potentialZones = STUDY_AREA; // Use entire study area if no constraints
+      }
+      
+      // Create a feature collection for the result
+      const result = {
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            properties: {
+              type: 'Potential Cleaning Zone',
+              description: 'Areas without constraint overlaps'
+            },
+            geometry: potentialZones.geometry
+          }
+        ]
+      };
+      
+      // Cache the result
+      dataCache.set(cacheKey, result, 7200); // Cache for 2 hours
+      console.log('Potential cleaning zones calculated and cached');
+      
+      return result;
+    })();
+    
+    // Race between calculation and timeout
+    const result = await Promise.race([calculationPromise, timeoutPromise])
+      .catch(error => {
+        console.error('Error or timeout in zones calculation:', error.message);
+        
+        // If calculation times out or fails, return a simplified fallback zone
+        return {
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: {
+                type: 'Potential Cleaning Zone (Simplified)',
+                description: 'Fallback cleaning zone - calculation timed out'
+              },
+              geometry: {
+                type: 'Polygon',
+                coordinates: [
+                  [
+                    [115.65, -32.02],
+                    [115.68, -32.02],
+                    [115.68, -31.98],
+                    [115.65, -31.98],
+                    [115.65, -32.02]
+                  ]
+                ]
+              }
+            }
+          ]
+        };
+      });
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Error generating potential cleaning zones:', error);
+    
+    // Return a simplified fallback zone instead of an error
+    res.json({
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {
+            type: 'Potential Cleaning Zone (Fallback)',
+            description: 'Fallback cleaning zone due to server error'
+          },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [
+              [
+                [115.65, -32.02],
+                [115.68, -32.02],
+                [115.68, -31.98],
+                [115.65, -31.98],
+                [115.65, -32.02]
+              ]
+            ]
+          }
+        }
+      ]
+    });
+  }
+});
     
     // Calculate the difference between the study area and constraints
     let potentialZones;
