@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@turf/turf": "^6.5.0",
+    "compression": "^1.8.0",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "node-cache": "^5.1.2",
