@@ -10,7 +10,13 @@ const app = express();
 const port = process.env.PORT || 3000;
 const dataCache = new NodeCache({ stdTTL: 3600 }); // Cache for 1 hour
 
-app.use(cors());
+// Configure CORS to allow requests from your Netlify domain
+app.use(cors({
+  origin: ['http://localhost:3000', 'https://cleanmyship.netlify.app', 'https://shipcleaninggis-client.netlify.app'],
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.static('public'));
 app.use(express.json());
 
@@ -501,6 +507,8 @@ app.post('/api/analyzeProximity', async (req, res) => {
       return res.status(400).json({ error: 'Missing coordinates' });
     }
     
+    console.log(`Analyzing proximity for coordinates: ${lat}, ${lng}`);
+    
     // Create a point feature from the coordinates
     const point = turf.point([parseFloat(lng), parseFloat(lat)]);
     
@@ -687,7 +695,16 @@ app.post('/api/analyzeProximity', async (req, res) => {
     
     // Check if point is in a recommended zone
     try {
-      const recommendedZones = await fetch(`${req.protocol}://${req.get('host')}/api/recommendedZones`).then(r => r.json());
+      // Use the local API for this to avoid cross-origin issues
+      const recommendedZonesUrl = `${req.protocol}://${req.get('host')}/api/recommendedZones`;
+      console.log(`Fetching recommended zones from: ${recommendedZonesUrl}`);
+      
+      const response = await fetch(recommendedZonesUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch recommended zones: ${response.statusText}`);
+      }
+      
+      const recommendedZones = await response.json();
       
       if (recommendedZones && recommendedZones.features && recommendedZones.features.length > 0) {
         const isInRecommendedZone = recommendedZones.features.some(feature => {
@@ -711,10 +728,13 @@ app.post('/api/analyzeProximity', async (req, res) => {
       };
     }
     
-    res.json({
+    const result = {
       coordinates: { lat, lng },
       results: analysisResults
-    });
+    };
+    
+    console.log(`Analysis complete for coordinates: ${lat}, ${lng}`);
+    res.json(result);
   } catch (error) {
     console.error('Error in proximity analysis:', error);
     res.status(500).json({ 
@@ -724,8 +744,28 @@ app.post('/api/analyzeProximity', async (req, res) => {
   }
 });
 
+// Add a health check endpoint
+app.get('/healthcheck', (req, res) => {
+  res.status(200).json({ status: 'ok', message: 'Server is running' });
+});
+
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.status(200).json({ 
+    status: 'ok', 
+    message: 'Ship Cleaning GIS API Server',
+    endpoints: [
+      '/api/portAuthorities',
+      '/api/marineParks',
+      '/api/fishHabitat',
+      '/api/cockburnSound',
+      '/api/mooringAreas',
+      '/api/marineInfrastructure',
+      '/api/recommendedZones',
+      '/api/nauticalReferences',
+      '/api/analyzeProximity (POST)',
+      '/healthcheck'
+    ]
+  });
 });
 
 app.listen(port, () => {
