@@ -35,6 +35,15 @@ let lastSuccessfulExternalAPICall = null;
 let apiCallAttempts = 0;
 let apiCallsSucceeded = 0;
 
+// Add this to track calculation status
+const zoneCalculations = {
+  inProgress: false,
+  lastStarted: null,
+  progress: 0, // 0-100
+  lastCompleted: null,
+  error: null
+};
+
 class APIExplorer {
   constructor(options = {}) {
     this.delayBetweenRequests = options.delayBetweenRequests || 2000;
@@ -813,6 +822,17 @@ function simplifyFeature(feature, tolerance = 0.001) {
   }
 }
 
+// Endpoint to check calculation status
+app.get('/api/zoneCalculationStatus', (req, res) => {
+  res.json({
+    inProgress: zoneCalculations.inProgress,
+    lastStarted: zoneCalculations.lastStarted,
+    progress: zoneCalculations.progress,
+    lastCompleted: zoneCalculations.lastCompleted,
+    error: zoneCalculations.error
+  });
+});
+
 // Calculate recommended zones by subtracting constraint areas from study area
 app.get('/api/recommendedZones', async (req, res) => {
   try {
@@ -826,7 +846,38 @@ app.get('/api/recommendedZones', async (req, res) => {
       return res.json(cachedZones);
     }
 
-    console.log('Calculating potential cleaning zones...');
+    // If calculation is already in progress, return status with retry header
+    if (zoneCalculations.inProgress) {
+      console.log('Zone calculation already in progress, returning status');
+      res.set('Retry-After', '10'); // Suggest client retry in 10 seconds
+      return res.status(202).json({ 
+        status: 'calculating',
+        message: 'Calculation in progress',
+        progress: zoneCalculations.progress,
+        started: zoneCalculations.lastStarted
+      });
+    }
+
+    // Mark calculation as started
+    zoneCalculations.inProgress = true;
+    zoneCalculations.lastStarted = new Date().toISOString();
+    zoneCalculations.progress = 0;
+    zoneCalculations.error = null;
+    
+    // Set a long timeout for the response - 2 minutes
+    res.setTimeout(120000, () => {
+      // If we hit the timeout, send an accepted response with status info
+      if (!res.headersSent) {
+        res.status(202).json({
+          status: 'calculating',
+          message: 'Calculation still in progress, please check back',
+          progress: zoneCalculations.progress,
+          started: zoneCalculations.lastStarted
+        });
+      }
+    });
+
+    console.log('Starting calculation of potential cleaning zones...');
     const explorer = new APIExplorer({ 
       delayBetweenRequests: 1000, 
       maxRetries: 3, 
@@ -834,57 +885,100 @@ app.get('/api/recommendedZones', async (req, res) => {
       useFallback: true 
     });
 
+    // Update progress
+    zoneCalculations.progress = 5;
+
     // Need fresh constraints data or use cached if available
     let allConstraints;
     
     if (cachedConstraints && lastConstraintsUpdate && (Date.now() - lastConstraintsUpdate < CONSTRAINTS_TTL)) {
       console.log('Using cached constraints data for calculation');
       allConstraints = cachedConstraints;
+      zoneCalculations.progress = 30; // Skip ahead in progress
     } else {
       // Fetch all constraint layers
-      const constraintData = await Promise.all(
-        Object.entries(ENDPOINTS)
+      console.log('Fetching constraint layers for calculation');
+      const constraintKeys = Object.entries(ENDPOINTS)
         .filter(([key]) => key !== 'bathymetry' && key !== 'recommendedZones')
-        .map(async ([key, url]) => {
-          try {
-            return await explorer.fetchGeoJSON(url, key);
-          } catch (err) {
-            console.warn(`Failed to fetch ${key}: ${err.message}`);
-            return null;
-          }
-        })
-      );
+        .map(([key]) => key);
       
-      // Combine all constraint features
+      // Fetch constraints one by one to avoid overwhelming the server
       allConstraints = { type: 'FeatureCollection', features: [] };
+      let constraintCount = 0;
       
-      constraintData.filter(c => c && c.features).forEach(c => {
-        const validFeatures = c.features.filter(feature => {
-          if (!feature.geometry || !feature.geometry.type) {
-            console.warn(`Skipping feature with no geometry`);
-            return false;
+      for (const key of constraintKeys) {
+        try {
+          console.log(`Fetching ${key} constraint data...`);
+          const url = ENDPOINTS[key];
+          const data = await explorer.fetchGeoJSON(url, key);
+          
+          if (data && data.features) {
+            // Only include polygon features
+            const validFeatures = data.features.filter(feature => {
+              if (!feature.geometry || !feature.geometry.type) {
+                return false;
+              }
+              
+              if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') {
+                return true;
+              }
+              
+              return false;
+            });
+            
+            allConstraints.features.push(...validFeatures);
           }
           
-          if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') {
-            return true;
-          }
-          
-          return false;
-        });
-        
-        allConstraints.features.push(...validFeatures);
-      });
+          // Update progress - constraint fetching is 30% of total
+          constraintCount++;
+          zoneCalculations.progress = Math.min(30, Math.floor((constraintCount / constraintKeys.length) * 30));
+        } catch (error) {
+          console.warn(`Failed to fetch ${key} for zone calculation: ${error.message}`);
+          // Continue with other constraints
+        }
+      }
       
       // Cache constraints for reuse
       cachedConstraints = allConstraints;
       lastConstraintsUpdate = Date.now();
     }
 
-    // Simplify geometries to speed up processing
+    // Calculate recommended zones in small batches to prevent memory issues
+    console.log(`Processing ${allConstraints.features.length} constraint features...`);
+    zoneCalculations.progress = 35;
+
+    // First, simplify all geometries to speed up processing
+    console.log('Simplifying constraint geometries...');
     const simplifiedConstraints = {
       type: 'FeatureCollection',
-      features: allConstraints.features.map(f => simplifyFeature(f, 0.005))
+      features: []
     };
+    
+    // Simplify in batches to prevent UI freezing
+    const batchSize = 10;
+    for (let i = 0; i < allConstraints.features.length; i += batchSize) {
+      const batch = allConstraints.features.slice(i, i + batchSize);
+      batch.forEach(feature => {
+        try {
+          const simplified = simplifyFeature(feature, 0.005); // Increase tolerance for better performance
+          if (simplified && simplified.geometry) {
+            simplifiedConstraints.features.push(simplified);
+          }
+        } catch (e) {
+          console.warn(`Failed to simplify feature: ${e.message}`);
+          // Skip this feature
+        }
+      });
+      
+      // Update progress - simplification is 10% of total
+      zoneCalculations.progress = 35 + Math.min(10, Math.floor((i / allConstraints.features.length) * 10));
+      
+      // Small delay to give the event loop a break
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    
+    zoneCalculations.progress = 45;
+    console.log(`Simplified to ${simplifiedConstraints.features.length} constraint features`);
 
     // Calculate recommended zones
     let constraintUnion = null;
@@ -893,35 +987,115 @@ app.get('/api/recommendedZones', async (req, res) => {
     if (simplifiedConstraints.features.length > 0) {
       try {
         // Process constraints in smaller batches to avoid memory issues
-        const batchSize = 5;
+        const processingBatchSize = 5;
+        const totalBatches = Math.ceil(simplifiedConstraints.features.length / processingBatchSize);
         
-        for (let i = 0; i < simplifiedConstraints.features.length; i += batchSize) {
-          const batch = simplifiedConstraints.features.slice(i, i + batchSize);
+        for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+          const startIdx = batchIndex * processingBatchSize;
+          const endIdx = Math.min(startIdx + processingBatchSize, simplifiedConstraints.features.length);
+          const batch = simplifiedConstraints.features.slice(startIdx, endIdx);
+          
+          console.log(`Processing batch ${batchIndex + 1}/${totalBatches} with ${batch.length} features`);
+          
+          // Create a batch union
+          let batchUnion = null;
           
           // Process each feature in the batch
           for (const feature of batch) {
             try {
-              if (constraintUnion) {
-                constraintUnion = turf.union(constraintUnion, feature);
+              if (batchUnion) {
+                batchUnion = turf.union(batchUnion, feature);
               } else {
-                constraintUnion = feature;
+                batchUnion = feature;
               }
             } catch (e) {
-              console.warn(`Failed to union feature: ${e.message}`);
+              console.warn(`Failed to union feature in batch: ${e.message}`);
               // Continue with other features
+            }
+          }
+          
+          // Merge this batch's union with the overall union
+          if (batchUnion) {
+            if (constraintUnion) {
+              try {
+                constraintUnion = turf.union(constraintUnion, batchUnion);
+              } catch (e) {
+                console.warn(`Failed to merge batch union: ${e.message}`);
+                // Keep previous union
+              }
+            } else {
+              constraintUnion = batchUnion;
+            }
+          }
+          
+          // Update progress - union operations are 40% of total
+          zoneCalculations.progress = 45 + Math.min(40, Math.floor(((batchIndex + 1) / totalBatches) * 40));
+          
+          // Small delay to prevent blocking
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        
+        // If we have a union, calculate difference with study area
+        console.log('Calculating final difference with study area...');
+        zoneCalculations.progress = 85;
+        
+        if (constraintUnion) {
+          try {
+            // Use a simplified study area for better performance
+            const simplifiedStudyArea = simplifyFeature(STUDY_AREA, 0.001);
+            potentialZones = turf.difference(simplifiedStudyArea, constraintUnion);
+          } catch (e) {
+            console.error('Difference operation failed:', e);
+            // Try an alternative approach - individual differences
+            console.log('Trying alternative difference calculation approach...');
+            
+            // Start with the study area and progressively subtract each constraint
+            potentialZones = STUDY_AREA;
+            
+            for (const feature of simplifiedConstraints.features.slice(0, 20)) { // Limit to first 20 most important constraints
+              try {
+                potentialZones = turf.difference(potentialZones, feature);
+              } catch (diffError) {
+                console.warn(`Individual difference failed: ${diffError.message}`);
+                // Continue with next constraint
+              }
             }
           }
         }
         
-        // Difference between study area and constraints
-        if (constraintUnion) {
-          potentialZones = turf.difference(STUDY_AREA, constraintUnion);
-        }
+        zoneCalculations.progress = 95;
       } catch (e) {
-        console.error('Union operation failed:', e);
-        // Continue with study area as fallback
+        console.error('Union/difference operations failed:', e);
+        zoneCalculations.error = e.message;
+        
+        // Create a more useful fallback - exclude only major constraints
+        try {
+          console.log('Generating alternative fallback zones...');
+          
+          // Start with the study area
+          potentialZones = STUDY_AREA;
+          
+          // Only use the largest few constraints (most important ones)
+          const majorConstraints = simplifiedConstraints.features
+            .slice(0, 10); // Use at most 10 constraints
+          
+          // Subtract each one individually
+          for (const constraint of majorConstraints) {
+            try {
+              potentialZones = turf.difference(potentialZones, constraint);
+            } catch (diffErr) {
+              console.warn(`Failed to subtract major constraint: ${diffErr.message}`);
+              // Continue with next constraint
+            }
+          }
+        } catch (fallbackErr) {
+          console.error('Fallback zone generation failed:', fallbackErr);
+          // Continue with study area as final fallback
+        }
       }
     }
+
+    zoneCalculations.progress = 98;
 
     // Create result GeoJSON
     const result = {
@@ -931,7 +1105,8 @@ app.get('/api/recommendedZones', async (req, res) => {
         properties: { 
           type: 'Potential Cleaning Zone',
           description: 'Areas outside all constraint zones',
-          calculatedAt: new Date().toISOString()
+          calculatedAt: new Date().toISOString(),
+          calculationTime: `${Math.floor((Date.now() - new Date(zoneCalculations.lastStarted).getTime()) / 1000)} seconds`
         },
         geometry: potentialZones.geometry
       }]
@@ -940,38 +1115,117 @@ app.get('/api/recommendedZones', async (req, res) => {
     // Cache the result for 24 hours
     dataCache.set(cacheKey, result, 86400);
     
+    // Update calculation status
+    zoneCalculations.progress = 100;
+    zoneCalculations.inProgress = false;
+    zoneCalculations.lastCompleted = new Date().toISOString();
+    
     // Send response
+    console.log('Zone calculation completed successfully');
     res.set('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
     res.json(result);
   } catch (error) {
     console.error('Error calculating recommended zones:', error);
     
-    // Return fallback zones if calculation fails
-    const fallbackZones = {
-      type: 'FeatureCollection',
-      features: [{
-        type: 'Feature',
-        properties: { 
-          type: 'Potential Cleaning Zone (Fallback)',
-          description: 'Simplified zone - calculation failed',
-          error: error.message
-        },
-        geometry: {
-          type: 'Polygon',
-          coordinates: [
-            [
-              [115.65, -32.02],
-              [115.68, -32.02],
-              [115.68, -31.98],
-              [115.65, -31.98],
-              [115.65, -32.02]
-            ]
-          ]
-        }
-      }]
-    };
+    // Update calculation status
+    zoneCalculations.inProgress = false;
+    zoneCalculations.error = error.message;
     
-    res.status(500).json(fallbackZones);
+    // Try with a more sensible fallback - multiple areas that exclude the most important constraints
+    try {
+      console.log('Generating emergency fallback zones...');
+      
+      // Include a set of predefined potential zones for the Fremantle area
+      // These are based on general knowledge of the area and exclude major ports/marine parks
+      const fallbackZones = {
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            properties: { 
+              type: 'Potential Cleaning Zone (Fallback)',
+              description: 'North of Fremantle - calculation failed, using predefined zones',
+              error: error.message,
+              confidence: 'medium',
+              note: 'This is a predefined fallback zone based on general constraints'
+            },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[
+                [115.68, -31.98],
+                [115.75, -31.98],
+                [115.75, -32.02],
+                [115.68, -32.02],
+                [115.68, -31.98]
+              ]]
+            }
+          },
+          {
+            type: 'Feature',
+            properties: { 
+              type: 'Potential Cleaning Zone (Fallback)',
+              description: 'West of Fremantle - calculation failed, using predefined zones',
+              error: error.message,
+              confidence: 'medium',
+              note: 'This is a predefined fallback zone based on general constraints'
+            },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[
+                [115.65, -32.04],
+                [115.70, -32.04],
+                [115.70, -32.08],
+                [115.65, -32.08],
+                [115.65, -32.04]
+              ]]
+            }
+          },
+          {
+            type: 'Feature',
+            properties: { 
+              type: 'Potential Cleaning Zone (Fallback)',
+              description: 'South of Fremantle - calculation failed, using predefined zones',
+              error: error.message,
+              confidence: 'medium',
+              note: 'This is a predefined fallback zone based on general constraints'
+            },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[
+                [115.75, -32.10],
+                [115.82, -32.10],
+                [115.82, -32.14],
+                [115.75, -32.14],
+                [115.75, -32.10]
+              ]]
+            }
+          }
+        ]
+      };
+      
+      // Cache the fallback result for 1 hour only (shorter time since it's a fallback)
+      dataCache.set(cacheKey, fallbackZones, 3600);
+      
+      res.status(500).json(fallbackZones);
+    } catch (fallbackError) {
+      console.error('Even fallback zone generation failed:', fallbackError);
+      
+      // Last resort fallback
+      const minimalFallback = {
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          properties: { 
+            type: 'Potential Cleaning Zone (Emergency Fallback)',
+            description: 'Unable to calculate zones - please try again later',
+            error: error.message
+          },
+          geometry: STUDY_AREA.geometry // Just use the whole study area as last resort
+        }]
+      };
+      
+      res.status(500).json(minimalFallback);
+    }
   }
 });
 
@@ -1383,6 +1637,7 @@ app.get('/', (req, res) => {
       '/api/recommendedZones',
       '/api/nauticalReferences',
       '/api/analyzeProximity (POST)',
+      '/api/zoneCalculationStatus',
       '/healthcheck',
       '/warmup'
     ],

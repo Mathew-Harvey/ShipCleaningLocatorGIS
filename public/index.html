@@ -458,6 +458,71 @@
       fill: #008080;
       fill-opacity: 0.15;
     }
+
+    /* Zone calculation status styles */
+    .calculation-status {
+      background: #f5f8ff;
+      border-left: 4px solid #673AB7;
+      padding: 8px 12px;
+      margin: 8px 0;
+      font-size: 13px;
+      border-radius: 0 4px 4px 0;
+    }
+
+    .calculation-progress {
+      font-weight: bold;
+      color: #673AB7;
+    }
+
+    .calculation-time {
+      font-size: 12px;
+      color: #666;
+      margin-top: 4px;
+    }
+
+    /* Fallback zone styling */
+    .fallback-zone-alert {
+      background: #fff8e1;
+      border-left: 4px solid #FFA000;
+      padding: 10px;
+      margin: 8px 0;
+      font-size: 13px;
+      border-radius: 0 4px 4px 0;
+      position: absolute;
+      top: 80px;
+      left: 10px;
+      z-index: 1000;
+      max-width: 300px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    }
+
+    /* Multiple fallback zones */
+    .fallback-zone-north {
+      color: #673AB7;
+      stroke: #673AB7;
+      stroke-width: 2px;
+      stroke-dasharray: 5, 5;
+      fill: #673AB7;
+      fill-opacity: 0.2;
+    }
+
+    .fallback-zone-west {
+      color: #2196F3;
+      stroke: #2196F3;
+      stroke-width: 2px;
+      stroke-dasharray: 5, 5;
+      fill: #2196F3;
+      fill-opacity: 0.2;
+    }
+
+    .fallback-zone-south {
+      color: #4CAF50;
+      stroke: #4CAF50;
+      stroke-width: 2px;
+      stroke-dasharray: 5, 5;
+      fill: #4CAF50;
+      fill-opacity: 0.2;
+    }
   </style>
 </head>
 
@@ -487,6 +552,10 @@
           style="padding: 8px 16px; background-color: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">No</button>
       </div>
     </div>
+  </div>
+  <div id="fallbackZoneAlert" class="fallback-zone-alert" style="display: none;">
+    <strong>Notice:</strong> Showing estimated potential cleaning zones based on general constraints. These are approximations while detailed calculations complete.
+    <button id="dismissFallbackAlert" style="display: block; margin-top: 8px; font-size: 12px; border: none; background: #FFA000; color: white; padding: 4px 8px; border-radius: 4px; cursor: pointer;">Dismiss</button>
   </div>
   <div id="map"></div>
   <div id="sidebar">
@@ -546,6 +615,10 @@
       <h4>Recommended Cleaning Zones</h4>
       <div class="layer-control layer-control-loading">
         <label><input type="checkbox" id="recommendedZonesCheckbox" checked> Potential Cleaning Zones</label>
+      </div>
+      <div id="zoneCalculationStatus" class="calculation-status" style="display: none;">
+        <div>Calculating recommended zones: <span id="calculationProgress" class="calculation-progress">0%</span></div>
+        <div id="calculationTime" class="calculation-time"></div>
       </div>
     </div>
     <div class="constraint-group">
@@ -667,28 +740,71 @@
       }
     };
     
-    // Fallback recommended zones
+    // Improved fallback recommended zones with multiple areas
     const FALLBACK_RECOMMENDED_ZONES = {
       type: 'FeatureCollection',
-      features: [{
-        type: 'Feature',
-        properties: { 
-          type: 'Potential Cleaning Zone (Offline Mode)',
-          description: 'Simplified zone - server unavailable'
-        },
-        geometry: {
-          type: 'Polygon',
-          coordinates: [
-            [
-              [115.65, -32.02],
-              [115.68, -32.02],
+      features: [
+        {
+          type: 'Feature',
+          properties: { 
+            type: 'Potential Cleaning Zone (Fallback)',
+            description: 'North of Fremantle - based on general knowledge of constraints',
+            confidence: 'medium',
+            note: 'This is an estimated zone (server calculation unavailable)',
+            zoneId: 'north'
+          },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [[
               [115.68, -31.98],
-              [115.65, -31.98],
-              [115.65, -32.02]
-            ]
-          ]
+              [115.75, -31.98],
+              [115.75, -32.02],
+              [115.68, -32.02],
+              [115.68, -31.98]
+            ]]
+          }
+        },
+        {
+          type: 'Feature',
+          properties: { 
+            type: 'Potential Cleaning Zone (Fallback)',
+            description: 'West of Fremantle - based on general knowledge of constraints',
+            confidence: 'medium',
+            note: 'This is an estimated zone (server calculation unavailable)',
+            zoneId: 'west'
+          },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [[
+              [115.65, -32.04],
+              [115.70, -32.04],
+              [115.70, -32.08],
+              [115.65, -32.08],
+              [115.65, -32.04]
+            ]]
+          }
+        },
+        {
+          type: 'Feature',
+          properties: { 
+            type: 'Potential Cleaning Zone (Fallback)',
+            description: 'South of Fremantle - based on general knowledge of constraints',
+            confidence: 'medium',
+            note: 'This is an estimated zone (server calculation unavailable)',
+            zoneId: 'south'
+          },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [[
+              [115.75, -32.10],
+              [115.82, -32.10],
+              [115.82, -32.14],
+              [115.75, -32.14],
+              [115.75, -32.10]
+            ]]
+          }
         }
-      }]
+      ]
     };
     
     // Fallback for each layer type
@@ -1116,6 +1232,14 @@
     let serverWakeupAttempts = 0;
     const MAX_WAKEUP_ATTEMPTS = 3;
 
+    // Zone calculation status tracking
+    let zoneCalculationPolling = null;
+    let zoneCalculationStartTime = null;
+    let zoneCalculationRetries = 0;
+    const MAX_ZONE_CALCULATION_RETRIES = 3;
+    let usingFallbackZones = false;
+    let temporaryFallbackShown = false;
+
     // Layer definitions with styles
     const govLayers = {
       // Original layers
@@ -1451,6 +1575,15 @@
           
           const data = await response.json();
           
+          // For recommended zones, check if calculation is in progress
+          if (key === 'recommendedZones' && data.status === 'calculating') {
+            // Set up for polling and show temporary zones
+            console.log('Zone calculation in progress, setting up polling');
+            setupZoneCalculationPolling(data);
+            // Return the fallback for now, polling will update later
+            return FALLBACK_RECOMMENDED_ZONES;
+          }
+          
           // Cache the successful response
           cachedData[key] = data;
           saveToLocalStorage(key, data);
@@ -1472,6 +1605,10 @@
             // Use fallback data if available
             if (key === 'recommendedZones') {
               console.warn(`Using fallback for ${key}: ${error.message}`);
+              if (!temporaryFallbackShown) {
+                showFallbackZoneAlert();
+                temporaryFallbackShown = true;
+              }
               return FALLBACK_RECOMMENDED_ZONES;
             } else if (FALLBACK_LAYERS[key]) {
               console.warn(`Using fallback for ${key}: ${error.message}`);
@@ -1495,6 +1632,10 @@
         console.error(`Error fetching ${key}:`, error);
         
         if (key === 'recommendedZones') {
+          if (!temporaryFallbackShown) {
+            showFallbackZoneAlert();
+            temporaryFallbackShown = true;
+          }
           return FALLBACK_RECOMMENDED_ZONES;
         } else if (FALLBACK_LAYERS[key]) {
           return FALLBACK_LAYERS[key];
@@ -1502,6 +1643,122 @@
           return FALLBACK_DATA;
         }
       }
+    }
+
+    // Show the fallback zone alert to inform users they're seeing temporary data
+    function showFallbackZoneAlert() {
+      const alert = document.getElementById('fallbackZoneAlert');
+      if (alert) {
+        alert.style.display = 'block';
+        
+        // Add dismiss handler
+        const dismissButton = document.getElementById('dismissFallbackAlert');
+        if (dismissButton) {
+          dismissButton.addEventListener('click', () => {
+            alert.style.display = 'none';
+          });
+        }
+      }
+      usingFallbackZones = true;
+    }
+
+    // Set up polling to check zone calculation status
+    function setupZoneCalculationPolling(initialData) {
+      // Show calculation status in UI
+      const calculationStatus = document.getElementById('zoneCalculationStatus');
+      const progressDisplay = document.getElementById('calculationProgress');
+      const timeDisplay = document.getElementById('calculationTime');
+      
+      if (calculationStatus) calculationStatus.style.display = 'block';
+      
+      // Initialize progress
+      zoneCalculationStartTime = Date.now();
+      const initialProgress = initialData.progress || 0;
+      if (progressDisplay) progressDisplay.textContent = `${initialProgress}%`;
+      
+      // Set up polling interval
+      clearInterval(zoneCalculationPolling);
+      zoneCalculationPolling = setInterval(async () => {
+        try {
+          const response = await fetch(`${apiBaseUrl}/api/zoneCalculationStatus`);
+          if (response.ok) {
+            const data = await response.json();
+            
+            // Update progress
+            if (progressDisplay) {
+              progressDisplay.textContent = `${data.progress || 0}%`;
+            }
+            
+            // Update elapsed time
+            const elapsedSeconds = Math.floor((Date.now() - zoneCalculationStartTime) / 1000);
+            if (timeDisplay) {
+              timeDisplay.textContent = `Elapsed: ${formatTime(elapsedSeconds)}`;
+            }
+            
+            // If complete, fetch the final zones
+            if (!data.inProgress && data.lastCompleted) {
+              console.log('Zone calculation complete, fetching results');
+              clearInterval(zoneCalculationPolling);
+              
+              // Reset status display
+              if (calculationStatus) calculationStatus.style.display = 'none';
+              
+              // Fetch and update the zones
+              try {
+                const response = await fetch(`${apiBaseUrl}/api/recommendedZones`);
+                if (response.ok) {
+                  const zonesData = await response.json();
+                  
+                  // Update the layer with real data
+                  cachedData.recommendedZones = zonesData;
+                  saveToLocalStorage('recommendedZones', zonesData);
+                  
+                  updateRecommendedZonesLayer(zonesData);
+                  
+                  // Hide fallback alert if it was shown
+                  if (usingFallbackZones) {
+                    const alert = document.getElementById('fallbackZoneAlert');
+                    if (alert) alert.style.display = 'none';
+                    usingFallbackZones = false;
+                  }
+                }
+              } catch (error) {
+                console.error('Failed to fetch completed zones:', error);
+              }
+            }
+            
+            // If error occurred
+            if (data.error) {
+              console.warn('Zone calculation error:', data.error);
+              clearInterval(zoneCalculationPolling);
+              
+              if (calculationStatus) calculationStatus.style.display = 'none';
+              
+              // Try again if we haven't reached retry limit
+              if (zoneCalculationRetries < MAX_ZONE_CALCULATION_RETRIES) {
+                zoneCalculationRetries++;
+                console.log(`Retrying zone calculation (attempt ${zoneCalculationRetries}/${MAX_ZONE_CALCULATION_RETRIES})`);
+                loadRecommendedZones();
+              } else {
+                console.warn('Max retries reached, using fallback zones');
+                if (!temporaryFallbackShown) {
+                  showFallbackZoneAlert();
+                  temporaryFallbackShown = true;
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.warn('Error checking zone calculation status:', error);
+        }
+      }, 5000); // Check every 5 seconds
+    }
+
+    // Format time in MM:SS format
+    function formatTime(seconds) {
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = seconds % 60;
+      return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
     }
 
     async function analyzeLocation(lat, lng) {
@@ -1736,6 +1993,13 @@
         content.appendChild(offlineNote);
       }
 
+      // Add fallback zones indicator if using temporary zones
+      if (usingFallbackZones) {
+        const fallbackNote = document.createElement('div');
+        fallbackNote.innerHTML = `<p style="color: #FFA000;"><strong>Note:</strong> Using estimated cleaning zones. The server is still calculating optimal zones.</p>`;
+        content.appendChild(fallbackNote);
+      }
+
       if (data.results.nauticalReferences) {
         const nauticalDiv = document.createElement('div');
         nauticalDiv.className = 'analysis-item';
@@ -1783,6 +2047,7 @@
               <p class="${isRecommended ? 'analysis-good' : 'analysis-warning'}">
                 This location is ${isRecommended ? '' : 'NOT '}within a recommended cleaning zone.
               </p>
+              ${usingFallbackZones ? '<p><small>Note: Using estimated zones - detailed calculation in progress.</small></p>' : ''}
             </div>
           `;
         }
@@ -1832,19 +2097,96 @@
       try {
         if (govLayers.recommendedZones.layer) map.removeLayer(govLayers.recommendedZones.layer);
 
-        govLayers.recommendedZones.layer = L.geoJSON(geojson, {
-          style: govLayers.recommendedZones.style,
-          onEachFeature: (feature, layer) => {
-            if (feature.properties) {
-              let popupContent = feature.properties.description && feature.properties.description.includes('simplified') ?
-                '<strong>Note:</strong> Using simplified zone data.<br><br>' : '';
-              popupContent += Object.entries(feature.properties)
-                .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
-                .join('<br>');
-              layer.bindPopup(popupContent);
+        // Check if this is fallback data
+        const isFallback = geojson.features.some(f => 
+          f.properties && 
+          (f.properties.type && f.properties.type.includes('Fallback')) || 
+          (f.properties.description && f.properties.description.includes('fallback'))
+        );
+        
+        if (isFallback) {
+          // Apply special styling for fallback zones to make them distinguishable
+          govLayers.recommendedZones.layer = L.geoJSON(geojson, {
+            style: (feature) => {
+              const zoneId = feature.properties.zoneId || '';
+              
+              // Apply different colors to different fallback zones
+              if (zoneId === 'north') {
+                return { 
+                  className: 'fallback-zone-north',
+                  color: '#673AB7', 
+                  weight: 2, 
+                  opacity: 0.8, 
+                  fillOpacity: 0.2,
+                  dashArray: '5, 5' 
+                };
+              } else if (zoneId === 'west') {
+                return { 
+                  className: 'fallback-zone-west',
+                  color: '#2196F3', 
+                  weight: 2, 
+                  opacity: 0.8, 
+                  fillOpacity: 0.2,
+                  dashArray: '5, 5'
+                };
+              } else if (zoneId === 'south') {
+                return { 
+                  className: 'fallback-zone-south',
+                  color: '#4CAF50', 
+                  weight: 2, 
+                  opacity: 0.8, 
+                  fillOpacity: 0.2,
+                  dashArray: '5, 5'
+                };
+              } else {
+                return { 
+                  color: '#673AB7', 
+                  weight: 2, 
+                  opacity: 0.8, 
+                  fillOpacity: 0.2,
+                  dashArray: '5, 5'
+                };
+              }
+            },
+            onEachFeature: (feature, layer) => {
+              if (feature.properties) {
+                let popupContent = '<strong>Estimated Cleaning Zone</strong><br>';
+                popupContent += '<p>This is an approximated zone based on general constraints. The server is still calculating optimal zones.</p><br>';
+                popupContent += Object.entries(feature.properties)
+                  .filter(([prop]) => !['zoneId'].includes(prop))
+                  .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
+                  .join('<br>');
+                layer.bindPopup(popupContent);
+              }
             }
+          }).addTo(map);
+          
+          // Show the fallback alert if not already shown
+          if (!temporaryFallbackShown) {
+            showFallbackZoneAlert();
+            temporaryFallbackShown = true;
           }
-        }).addTo(map);
+          usingFallbackZones = true;
+        } else {
+          // Regular styling for server-calculated zones
+          govLayers.recommendedZones.layer = L.geoJSON(geojson, {
+            style: govLayers.recommendedZones.style,
+            onEachFeature: (feature, layer) => {
+              if (feature.properties) {
+                let popupContent = '';
+                popupContent += Object.entries(feature.properties)
+                  .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
+                  .join('<br>');
+                layer.bindPopup(popupContent);
+              }
+            }
+          }).addTo(map);
+          
+          // Hide fallback alert if it was shown
+          const alert = document.getElementById('fallbackZoneAlert');
+          if (alert) alert.style.display = 'none';
+          usingFallbackZones = false;
+        }
 
         govLayers.recommendedZones.layer.on('click', e => {
           L.DomEvent.stopPropagation(e);
@@ -1869,19 +2211,101 @@
       }
     }
 
-    function loadRecommendedZones() {
+    async function loadRecommendedZones() {
       updateLayerLoadingState('recommendedZones', true);
       updateLoadingMessage('Loading potential cleaning zones...');
       
-      return fetchLayerData(govLayers.recommendedZones.url, 'recommendedZones')
-        .then(geojson => {
-          updateRecommendedZonesLayer(geojson);
-        })
-        .catch(err => {
-          console.error(`Error loading recommendedZones: ${err}`);
-          showError('Failed to load detailed cleaning zones. Using simplified version.');
-          updateRecommendedZonesLayer(FALLBACK_RECOMMENDED_ZONES);
+      // Reset zone calculation status
+      zoneCalculationRetries = 0;
+      clearInterval(zoneCalculationPolling);
+      document.getElementById('zoneCalculationStatus').style.display = 'none';
+      
+      // First try to get from memory cache or localStorage
+      if (cachedData.recommendedZones) {
+        console.log('Using cached recommended zones');
+        updateRecommendedZonesLayer(cachedData.recommendedZones);
+        return Promise.resolve();
+      }
+      
+      const localData = getFromLocalStorage('recommendedZones');
+      if (localData) {
+        console.log('Using localStorage recommended zones');
+        cachedData.recommendedZones = localData;
+        updateRecommendedZonesLayer(localData);
+        return Promise.resolve();
+      }
+      
+      // If server is offline, use fallback immediately
+      if (!serverOnline && !API_CONFIG.mockMode) {
+        console.log('Server offline, using fallback for recommended zones');
+        showFallbackZoneAlert();
+        updateRecommendedZonesLayer(FALLBACK_RECOMMENDED_ZONES);
+        return Promise.resolve();
+      }
+      
+      // Try to fetch from server - this might return a 202 status with progress info
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 120000); // 2-minute timeout for initial calculation
+        
+        const response = await fetch(`${apiBaseUrl}/api/recommendedZones`, { 
+          signal: controller.signal
         });
+        
+        clearTimeout(timeoutId);
+        
+        if (response.status === 202) {
+          // Calculation in progress - set up polling and show temporary zones
+          const data = await response.json();
+          console.log('Zone calculation in progress:', data);
+          
+          // Show temporary fallback zones
+          temporaryFallbackShown = true;
+          showFallbackZoneAlert();
+          updateRecommendedZonesLayer(FALLBACK_RECOMMENDED_ZONES);
+          
+          // Set up polling to check status
+          setupZoneCalculationPolling(data);
+          
+          return Promise.resolve();
+        } else if (response.ok) {
+          // Calculation complete - use the data
+          const data = await response.json();
+          
+          // Cache the results
+          cachedData.recommendedZones = data;
+          saveToLocalStorage('recommendedZones', data);
+          
+          // Update the map
+          updateRecommendedZonesLayer(data);
+          
+          return Promise.resolve();
+        } else {
+          throw new Error(`Server returned status ${response.status}`);
+        }
+      } catch (error) {
+        console.error('Error fetching recommended zones:', error);
+        
+        // Show fallback with explanation
+        showFallbackZoneAlert();
+        updateRecommendedZonesLayer(FALLBACK_RECOMMENDED_ZONES);
+        
+        // Check calculation status to see if it's still running
+        try {
+          const statusResponse = await fetch(`${apiBaseUrl}/api/zoneCalculationStatus`);
+          if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+            if (statusData.inProgress) {
+              // Set up polling to check status
+              setupZoneCalculationPolling(statusData);
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to check calculation status:', e);
+        }
+        
+        return Promise.resolve();
+      }
     }
 
     // Create navigation aids layer
@@ -2611,6 +3035,11 @@
             map.removeLayer(currentMarker);
             currentMarker = null;
           }
+        });
+
+        // Setup fallback alert dismiss handler
+        document.getElementById('dismissFallbackAlert').addEventListener('click', () => {
+          document.getElementById('fallbackZoneAlert').style.display = 'none';
         });
 
         // Load constraint layers
