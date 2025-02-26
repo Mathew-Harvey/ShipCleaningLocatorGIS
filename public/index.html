@@ -523,6 +523,43 @@
       fill: #4CAF50;
       fill-opacity: 0.2;
     }
+/* Add these to the existing <style> section */
+  .layer-control-error {
+  opacity: 0.8;
+  background-color: #fff5f5;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.layer-control-error:after {
+  content: " (error)";
+  font-style: italic;
+  color: #e53935;
+}
+
+.layer-error-message {
+  font-size: 0.8em;
+  color: #e53935;
+  margin-left: 24px;
+  font-style: italic;
+}
+
+.layer-retry-button {
+  margin-left: 24px;
+  font-size: 0.8em;
+  background-color: #673AB7;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.layer-retry-button:hover {
+  background-color: #5E35B1;
+}
+
   </style>
 </head>
 
@@ -1422,19 +1459,108 @@
       progressFill.style.width = `${progress}%`;
     }
     
-    function updateLayerLoadingState(key, isLoading) {
-      const control = document.querySelector(`#${key}Checkbox`);
-      if (control) {
-        const parent = control.closest('.layer-control');
-        if (parent) parent.classList.toggle('layer-control-loading', isLoading);
-      }
+// Updated function to display error state and add retry button
+function updateLayerLoadingState(key, isLoading, error = null) {
+  const control = document.querySelector(`#${key}Checkbox`);
+  if (control) {
+    const parent = control.closest('.layer-control');
+    if (parent) {
+      // Remove all state classes
+      parent.classList.remove('layer-control-loading', 'layer-control-error');
       
-      // Update loading progress
-      if (!isLoading) {
-        loadedItems++;
-        updateLoadingProgress();
+      // Add appropriate class
+      if (isLoading) {
+        parent.classList.add('layer-control-loading');
+      } else if (error) {
+        parent.classList.add('layer-control-error');
+        
+        // Add error message
+        let errorMsg = parent.querySelector('.layer-error-message');
+        if (!errorMsg) {
+          errorMsg = document.createElement('div');
+          errorMsg.className = 'layer-error-message';
+          parent.appendChild(errorMsg);
+        }
+        errorMsg.textContent = 'Unable to load data';
+        
+        // Add retry button if not already present
+        let retryBtn = parent.querySelector('.layer-retry-button');
+        if (!retryBtn) {
+          retryBtn = document.createElement('button');
+          retryBtn.className = 'layer-retry-button';
+          retryBtn.textContent = 'Retry';
+          retryBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            retryLoadLayer(key);
+          });
+          parent.appendChild(retryBtn);
+        }
       }
     }
+  }
+  
+  // Update loading progress
+  if (!isLoading) {
+    loadedItems++;
+    updateLoadingProgress();
+  }
+}
+
+// New function to retry loading a specific layer
+async function retryLoadLayer(key) {
+  if (!govLayers[key]) return;
+  
+  try {
+    const layerControl = document.querySelector(`#${key}Checkbox`).closest('.layer-control');
+    // Clear existing error state
+    const errorMsg = layerControl.querySelector('.layer-error-message');
+    if (errorMsg) errorMsg.remove();
+    
+    // Show loading state
+    updateLayerLoadingState(key, true);
+    
+    // Clear cached data for this layer to force a fresh fetch
+    delete cachedData[key];
+    
+    // Fetch the layer data
+    const data = await fetchLayerData(govLayers[key].url, key);
+    
+    // Create the layer
+    if (govLayers[key].layer) {
+      map.removeLayer(govLayers[key].layer);
+    }
+    
+    govLayers[key].layer = L.geoJSON(data, {
+      style: govLayers[key].style,
+      onEachFeature: (feature, layer) => {
+        if (feature.properties) {
+          const popupContent = Object.entries(feature.properties)
+            .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
+            .join('<br>');
+          layer.bindPopup(popupContent);
+        }
+      }
+    }).addTo(map);
+    
+    govLayers[key].layer.on('click', e => {
+      L.DomEvent.stopPropagation(e);
+      tempClickLocation = e.latlng;
+      document.getElementById('confirmationModal').style.display = 'block';
+    });
+    
+    // Update layer state
+    updateLayerLoadingState(key, false);
+    
+    // Remove retry button
+    const retryBtn = layerControl.querySelector('.layer-retry-button');
+    if (retryBtn) retryBtn.remove();
+    
+  } catch (error) {
+    console.error(`Error retrying layer ${key}:`, error);
+    updateLayerLoadingState(key, false, error);
+    showError(`Failed to load ${key} data. Please try again.`);
+  }
+}
 
     function updateLoadingMessage(message, showProgress = true) {
       const loadingMsg = document.getElementById('loadingMessage');
@@ -1523,127 +1649,95 @@
       }
     }
 
-    async function fetchWithRetry(url, key, retries = 5) {
-      const timeoutDuration = key === 'recommendedZones' ? 60000 : 30000;
-      const fullUrl = url.startsWith('http') ? url : `${apiBaseUrl}${url}`;
+// Modified function to handle API failures without using generic fallbacks
+async function fetchWithRetry(url, key, retries = 5) {
+  const timeoutDuration = key === 'recommendedZones' ? 60000 : 30000;
+  const fullUrl = url.startsWith('http') ? url : `${apiBaseUrl}${url}`;
+  
+  // Try to get from memory cache first
+  if (cachedData[key]) {
+    console.log(`Using memory-cached data for ${key}`);
+    return cachedData[key];
+  }
+  
+  // Try to get from localStorage cache
+  const localData = getFromLocalStorage(key);
+  if (localData) {
+    console.log(`Using localStorage data for ${key}`);
+    cachedData[key] = localData;
+    return localData;
+  }
+  
+  // Update loading message
+  updateLoadingMessage(`Fetching ${key.replace(/([A-Z])/g, ' $1').toLowerCase()}...`);
+  
+  for (let i = 0; i < retries; i++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutDuration);
+      console.log(`Fetching data from: ${fullUrl}`);
       
-      // Try to get from memory cache first
-      if (cachedData[key]) {
-        console.log(`Using memory-cached data for ${key}`);
-        return cachedData[key];
+      const response = await fetch(fullUrl, { 
+        signal: controller.signal,
+        headers: { 'Cache-Control': 'no-cache' }
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error: ${response.status}`);
       }
       
-      // Try to get from localStorage cache
-      const localData = getFromLocalStorage(key);
-      if (localData) {
-        console.log(`Using localStorage data for ${key}`);
-        cachedData[key] = localData;
-        return localData;
+      const data = await response.json();
+      
+      // For recommended zones, check if calculation is in progress
+      if (key === 'recommendedZones' && data.status === 'calculating') {
+        // Set up for polling and return progress info
+        console.log('Zone calculation in progress, setting up polling');
+        setupZoneCalculationPolling(data);
+        throw new Error('Zone calculation in progress');
       }
       
-      // If server is known to be offline, use fallback immediately 
-      if (!serverOnline && !API_CONFIG.mockMode) {
-        console.log(`Server offline, using fallback for ${key}`);
-        if (key === 'recommendedZones') {
-          return FALLBACK_RECOMMENDED_ZONES;
-        } else if (FALLBACK_LAYERS[key]) {
-          return FALLBACK_LAYERS[key];
-        } else {
-          return FALLBACK_DATA;
-        }
-      }
+      // Cache the successful response
+      cachedData[key] = data;
+      saveToLocalStorage(key, data);
       
-      // Update loading message
-      updateLoadingMessage(`Fetching ${key.replace(/([A-Z])/g, ' $1').toLowerCase()}...`);
+      return data;
+    } catch (error) {
+      console.warn(`Attempt ${i+1}/${retries} for ${key} failed: ${error.message}`);
       
-      for (let i = 0; i < retries; i++) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), timeoutDuration);
-          console.log(`Fetching data from: ${fullUrl}`);
-          
-          const response = await fetch(fullUrl, { 
-            signal: controller.signal,
-            headers: { 'Cache-Control': 'no-cache' }
-          });
-          
-          clearTimeout(timeoutId);
-          
-          if (!response.ok) {
-            throw new Error(`HTTP error: ${response.status}`);
-          }
-          
-          const data = await response.json();
-          
-          // For recommended zones, check if calculation is in progress
-          if (key === 'recommendedZones' && data.status === 'calculating') {
-            // Set up for polling and show temporary zones
-            console.log('Zone calculation in progress, setting up polling');
-            setupZoneCalculationPolling(data);
-            // Return the fallback for now, polling will update later
-            return FALLBACK_RECOMMENDED_ZONES;
-          }
-          
-          // Cache the successful response
-          cachedData[key] = data;
-          saveToLocalStorage(key, data);
-          
-          return data;
-        } catch (error) {
-          console.warn(`Attempt ${i+1}/${retries} for ${key} failed: ${error.message}`);
-          
-          if (i === retries - 1) {
-            console.error(`Failed to fetch ${key} after ${retries} attempts: ${error.message}`);
-            
-            // Server might be down, update status
-            if (!serverOnline) {
-              updateServerStatus('offline', 'Server unavailable - using offline mode');
-            } else {
-              updateServerStatus('degraded', 'Server having issues - some data may be unavailable');
-            }
-            
-            // Use fallback data if available
-            if (key === 'recommendedZones') {
-              console.warn(`Using fallback for ${key}: ${error.message}`);
-              if (!temporaryFallbackShown) {
-                showFallbackZoneAlert();
-                temporaryFallbackShown = true;
-              }
-              return FALLBACK_RECOMMENDED_ZONES;
-            } else if (FALLBACK_LAYERS[key]) {
-              console.warn(`Using fallback for ${key}: ${error.message}`);
-              return FALLBACK_LAYERS[key];
-            } else {
-              throw error;
-            }
-          }
-          
-          // Exponential backoff
-          const waitTime = Math.min(1000 * Math.pow(1.5, i), 10000);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
-        }
-      }
-    }
-
-    async function fetchLayerData(url, key) {
-      try {
-        return await fetchWithRetry(url, key);
-      } catch (error) {
-        console.error(`Error fetching ${key}:`, error);
+      if (i === retries - 1) {
+        console.error(`Failed to fetch ${key} after ${retries} attempts: ${error.message}`);
         
-        if (key === 'recommendedZones') {
-          if (!temporaryFallbackShown) {
-            showFallbackZoneAlert();
-            temporaryFallbackShown = true;
-          }
-          return FALLBACK_RECOMMENDED_ZONES;
-        } else if (FALLBACK_LAYERS[key]) {
-          return FALLBACK_LAYERS[key];
+        // Server might be down, update status
+        if (!serverOnline) {
+          updateServerStatus('offline', 'Server unavailable - using offline mode');
         } else {
-          return FALLBACK_DATA;
+          updateServerStatus('degraded', 'Server having issues - some data may be unavailable');
         }
+        
+        // Throw the error instead of returning fake data
+        throw error;
       }
+      
+      // Exponential backoff
+      const waitTime = Math.min(1000 * Math.pow(1.5, i), 10000);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
     }
+  }
+}
+
+
+// Updated function to handle layer data fetching with proper error handling
+async function fetchLayerData(url, key) {
+  try {
+    return await fetchWithRetry(url, key);
+  } catch (error) {
+    console.error(`Error fetching ${key}:`, error);
+    // Don't return fallback data, instead propagate the error
+    throw error;
+  }
+}
 
     // Show the fallback zone alert to inform users they're seeing temporary data
     function showFallbackZoneAlert() {
@@ -3043,90 +3137,63 @@
         });
 
         // Load constraint layers
-        const loadPromises = Object.keys(govLayers)
-          .filter(key => key !== 'recommendedZones')
-          .map(key => {
-            updateLayerLoadingState(key, true);
-            updateLoadingMessage(`Loading ${key.replace(/([A-Z])/g, ' $1').toLowerCase()}...`);
-            return fetchLayerData(govLayers[key].url, key)
-              .then(geojson => {
-                try {
-                  govLayers[key].layer = L.geoJSON(geojson, {
-                    style: govLayers[key].style,
-                    onEachFeature: (feature, layer) => {
-                      if (feature.properties) {
-                        const popupContent = Object.entries(feature.properties)
-                          .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
-                          .join('<br>');
-                        layer.bindPopup(popupContent);
-                      }
-                    }
-                  }).addTo(map);
+       // Modified section of the initMap function where layers are loaded
+// Load constraint layers
+const loadPromises = Object.keys(govLayers)
+  .filter(key => key !== 'recommendedZones')
+  .map(key => {
+    updateLayerLoadingState(key, true);
+    updateLoadingMessage(`Loading ${key.replace(/([A-Z])/g, ' $1').toLowerCase()}...`);
+    return fetchLayerData(govLayers[key].url, key)
+      .then(geojson => {
+        try {
+          govLayers[key].layer = L.geoJSON(geojson, {
+            style: govLayers[key].style,
+            onEachFeature: (feature, layer) => {
+              if (feature.properties) {
+                const popupContent = Object.entries(feature.properties)
+                  .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
+                  .join('<br>');
+                layer.bindPopup(popupContent);
+              }
+            }
+          }).addTo(map);
 
-                  govLayers[key].layer.on('click', e => {
-                    L.DomEvent.stopPropagation(e);
-                    tempClickLocation = e.latlng;
-                    document.getElementById('confirmationModal').style.display = 'block';
-                  });
-
-                  const checkbox = document.getElementById(key + 'Checkbox');
-                  if (checkbox) {
-                    checkbox.addEventListener('change', e => {
-                      e.target.checked ? map.addLayer(govLayers[key].layer) : map.removeLayer(govLayers[key].layer);
-                    });
-                  }
-                } catch (error) {
-                  console.error(`Error creating layer for ${key}:`, error);
-                  showError(`Failed to create ${key} layer. Using simplified version.`);
-                  
-                  // Try with simplified data
-                  if (FALLBACK_LAYERS[key]) {
-                    govLayers[key].layer = L.geoJSON(FALLBACK_LAYERS[key], {
-                      style: govLayers[key].style
-                    }).addTo(map);
-                  }
-                }
-                updateLayerLoadingState(key, false);
-              })
-              .catch(err => {
-                console.error(`Error loading ${key}:`, err);
-                showError(`Failed to load ${key}. Using offline data.`);
-                
-                // Use fallback data
-                if (FALLBACK_LAYERS[key]) {
-                  try {
-                    govLayers[key].layer = L.geoJSON(FALLBACK_LAYERS[key], {
-                      style: govLayers[key].style,
-                      onEachFeature: (feature, layer) => {
-                        if (feature.properties) {
-                          const popupContent = Object.entries(feature.properties)
-                            .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
-                            .join('<br>');
-                          layer.bindPopup(popupContent);
-                        }
-                      }
-                    }).addTo(map);
-                    
-                    govLayers[key].layer.on('click', e => {
-                      L.DomEvent.stopPropagation(e);
-                      tempClickLocation = e.latlng;
-                      document.getElementById('confirmationModal').style.display = 'block';
-                    });
-                    
-                    const checkbox = document.getElementById(key + 'Checkbox');
-                    if (checkbox) {
-                      checkbox.addEventListener('change', e => {
-                        e.target.checked ? map.addLayer(govLayers[key].layer) : map.removeLayer(govLayers[key].layer);
-                      });
-                    }
-                  } catch (error) {
-                    console.error(`Error creating fallback layer for ${key}:`, error);
-                  }
-                }
-                
-                updateLayerLoadingState(key, false);
-              });
+          govLayers[key].layer.on('click', e => {
+            L.DomEvent.stopPropagation(e);
+            tempClickLocation = e.latlng;
+            document.getElementById('confirmationModal').style.display = 'block';
           });
+
+          const checkbox = document.getElementById(key + 'Checkbox');
+          if (checkbox) {
+            checkbox.addEventListener('change', e => {
+              e.target.checked ? map.addLayer(govLayers[key].layer) : map.removeLayer(govLayers[key].layer);
+            });
+          }
+        } catch (error) {
+          console.error(`Error creating layer for ${key}:`, error);
+          throw error; // Propagate the error
+        }
+        updateLayerLoadingState(key, false);
+      })
+      .catch(err => {
+        console.error(`Error loading ${key}:`, err);
+        updateLayerLoadingState(key, false, err); // Mark as error
+        showError(`Failed to load ${key}. Click retry to try again.`);
+        
+        // Add event listener to checkbox to show error message when checking
+        const checkbox = document.getElementById(key + 'Checkbox');
+        if (checkbox) {
+          checkbox.addEventListener('change', e => {
+            if (e.target.checked && !govLayers[key].layer) {
+              showError(`${key} data is not available. Please click retry to load.`);
+              e.target.checked = false; // Uncheck the box since there's no data
+            }
+          });
+        }
+      });
+  });
 
         loadPromises.push(loadRecommendedZones());
         await Promise.allSettled(loadPromises);
