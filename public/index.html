@@ -1649,6 +1649,21 @@ async function retryLoadLayer(key) {
       }
     }
 
+    function showSuccessMessage(message, duration = 3000) {
+  // Create success toast if it doesn't exist
+  if (!document.getElementById('successToast')) {
+    const toast = document.createElement('div');
+    toast.id = 'successToast';
+    toast.style.cssText = 'display: none; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #4CAF50; color: white; padding: 12px 20px; border-radius: 4px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2); z-index: 3100; font-size: 14px;';
+    document.body.appendChild(toast);
+  }
+  
+  const toast = document.getElementById('successToast');
+  toast.textContent = message;
+  toast.style.display = 'block';
+  setTimeout(() => toast.style.display = 'none', duration);
+}
+
 // Modified function to handle API failures without using generic fallbacks
 async function fetchWithRetry(url, key, retries = 5) {
   const timeoutDuration = key === 'recommendedZones' ? 60000 : 30000;
@@ -1758,102 +1773,120 @@ async function fetchLayerData(url, key) {
 
     // Set up polling to check zone calculation status
     function setupZoneCalculationPolling(initialData) {
-      // Show calculation status in UI
-      const calculationStatus = document.getElementById('zoneCalculationStatus');
-      const progressDisplay = document.getElementById('calculationProgress');
-      const timeDisplay = document.getElementById('calculationTime');
-      
-      if (calculationStatus) calculationStatus.style.display = 'block';
-      
-      // Initialize progress
-      zoneCalculationStartTime = Date.now();
-      const initialProgress = initialData.progress || 0;
-      if (progressDisplay) progressDisplay.textContent = `${initialProgress}%`;
-      
-      // Set up polling interval
-      clearInterval(zoneCalculationPolling);
-      zoneCalculationPolling = setInterval(async () => {
-        try {
-          const response = await fetch(`${apiBaseUrl}/api/zoneCalculationStatus`);
-          if (response.ok) {
-            const data = await response.json();
-            
-            // Update progress
-            if (progressDisplay) {
-              progressDisplay.textContent = `${data.progress || 0}%`;
-            }
-            
-            // Update elapsed time
-            const elapsedSeconds = Math.floor((Date.now() - zoneCalculationStartTime) / 1000);
-            if (timeDisplay) {
-              timeDisplay.textContent = `Elapsed: ${formatTime(elapsedSeconds)}`;
-            }
-            
-            // If complete, fetch the final zones
-            if (!data.inProgress && data.lastCompleted) {
-              console.log('Zone calculation complete, fetching results');
-              clearInterval(zoneCalculationPolling);
-              
-              // Reset status display
-              if (calculationStatus) calculationStatus.style.display = 'none';
-              
-              // Fetch and update the zones
-              try {
-                const response = await fetch(`${apiBaseUrl}/api/recommendedZones`);
-                if (response.ok) {
-                  const zonesData = await response.json();
-                  
-                  // Update the layer with real data
-                  cachedData.recommendedZones = zonesData;
-                  saveToLocalStorage('recommendedZones', zonesData);
-                  
-                  updateRecommendedZonesLayer(zonesData);
-                  
-                  // Hide fallback alert if it was shown
-                  if (usingFallbackZones) {
-                    const alert = document.getElementById('fallbackZoneAlert');
-                    if (alert) alert.style.display = 'none';
-                    usingFallbackZones = false;
-                  }
-                }
-              } catch (error) {
-                console.error('Failed to fetch completed zones:', error);
-              }
-            }
-            
-            // If error occurred
-            if (data.error) {
-              console.warn('Zone calculation error:', data.error);
-              clearInterval(zoneCalculationPolling);
-              
-              if (calculationStatus) calculationStatus.style.display = 'none';
-              
-              // Try again if we haven't reached retry limit
-              if (zoneCalculationRetries < MAX_ZONE_CALCULATION_RETRIES) {
-                zoneCalculationRetries++;
-                console.log(`Retrying zone calculation (attempt ${zoneCalculationRetries}/${MAX_ZONE_CALCULATION_RETRIES})`);
-                loadRecommendedZones();
-              } else {
-                console.warn('Max retries reached, using fallback zones');
-                if (!temporaryFallbackShown) {
-                  showFallbackZoneAlert();
-                  temporaryFallbackShown = true;
-                }
-              }
-            }
+  // Show calculation status in UI
+  const calculationStatus = document.getElementById('zoneCalculationStatus');
+  const progressDisplay = document.getElementById('calculationProgress');
+  const timeDisplay = document.getElementById('calculationTime');
+  
+  if (calculationStatus) calculationStatus.style.display = 'block';
+  
+  // Initialize progress
+  zoneCalculationStartTime = Date.now();
+  const initialProgress = initialData.progress || 0;
+  if (progressDisplay) progressDisplay.textContent = `${initialProgress}%`;
+  
+  // Set up polling interval
+  clearInterval(zoneCalculationPolling);
+  zoneCalculationPolling = setInterval(async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/zoneCalculationStatus`);
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Update progress
+        if (progressDisplay) {
+          progressDisplay.textContent = `${data.progress || 0}%`;
+          
+          // Add progress bar
+          if (!document.getElementById('zoneProgressBar')) {
+            const progressBarHTML = `
+              <div id="zoneProgressBar" style="width: 100%; background-color: #f3f3f3; height: 8px; margin-top: 5px; border-radius: 4px;">
+                <div id="zoneProgressFill" style="height: 100%; width: ${data.progress || 0}%; background-color: #673AB7; border-radius: 4px; transition: width 0.5s ease;"></div>
+              </div>
+            `;
+            calculationStatus.insertAdjacentHTML('beforeend', progressBarHTML);
+          } else {
+            document.getElementById('zoneProgressFill').style.width = `${data.progress || 0}%`;
           }
-        } catch (error) {
-          console.warn('Error checking zone calculation status:', error);
         }
-      }, 5000); // Check every 5 seconds
-    }
+        
+        // Update elapsed time and estimated time remaining
+        const elapsedSeconds = Math.floor((Date.now() - zoneCalculationStartTime) / 1000);
+        if (timeDisplay) {
+          timeDisplay.innerHTML = `
+            Elapsed: ${formatTime(elapsedSeconds)}<br>
+            ${data.estimatedTimeRemaining ? `Estimated remaining: ${data.estimatedTimeRemaining}` : ''}
+          `;
+        }
+        
+        // If complete, fetch the final zones
+        if (!data.inProgress && data.lastCompleted) {
+          console.log('Zone calculation complete, fetching results');
+          clearInterval(zoneCalculationPolling);
+          
+          // Reset status display after a moment
+          setTimeout(() => {
+            if (calculationStatus) calculationStatus.style.display = 'none';
+          }, 3000);
+          
+          // Fetch and update the zones
+          try {
+            const response = await fetch(`${apiBaseUrl}/api/recommendedZones`);
+            if (response.ok) {
+              const zonesData = await response.json();
+              
+              // Update the layer with real data
+              cachedData.recommendedZones = zonesData;
+              saveToLocalStorage('recommendedZones', zonesData);
+              
+              updateRecommendedZonesLayer(zonesData);
+              
+              // Show success message
+              showSuccessMessage('Recommended zones calculated successfully!');
+            }
+          } catch (error) {
+            console.error('Failed to fetch completed zones:', error);
+            showError('Could not load recommended zones. Please try again.');
+          }
+        }
+        
+        // If error occurred
+        if (data.error) {
+          console.warn('Zone calculation error:', data.error);
+          clearInterval(zoneCalculationPolling);
+          
+          // Show error with retry button
+          if (calculationStatus) {
+            calculationStatus.innerHTML = `
+              <div style="color: #e53935; margin-top: 10px;">
+                Error calculating zones: ${data.error}
+                <button id="retryZoneCalculation" class="retry-button">Retry</button>
+              </div>
+            `;
+            
+            // Add retry button event listener
+            document.getElementById('retryZoneCalculation').addEventListener('click', () => {
+              calculationStatus.style.display = 'none';
+              loadRecommendedZones();
+            });
+          }
+          
 
-    // Format time in MM:SS format
-    function formatTime(seconds) {
-      const minutes = Math.floor(seconds / 60);
-      const remainingSeconds = seconds % 60;
-      return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+
+          // Try again if we haven't reached retry limit
+          if (zoneCalculationRetries < MAX_ZONE_CALCULATION_RETRIES) {
+            zoneCalculationRetries++;
+            console.log(`Retrying zone calculation (attempt ${zoneCalculationRetries}/${MAX_ZONE_CALCULATION_RETRIES})`);
+            loadRecommendedZones();
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Error checking zone calculation status:', error);
     }
+  }, 5000); // Check every 5 seconds
+}
+
 
     async function analyzeLocation(lat, lng) {
       try {
@@ -2188,219 +2221,159 @@ async function fetchLayerData(url, key) {
     }
 
     function updateRecommendedZonesLayer(geojson) {
-      try {
-        if (govLayers.recommendedZones.layer) map.removeLayer(govLayers.recommendedZones.layer);
+  try {
+    if (govLayers.recommendedZones.layer) map.removeLayer(govLayers.recommendedZones.layer);
 
-        // Check if this is fallback data
-        const isFallback = geojson.features.some(f => 
-          f.properties && 
-          (f.properties.type && f.properties.type.includes('Fallback')) || 
-          (f.properties.description && f.properties.description.includes('fallback'))
-        );
-        
-        if (isFallback) {
-          // Apply special styling for fallback zones to make them distinguishable
-          govLayers.recommendedZones.layer = L.geoJSON(geojson, {
-            style: (feature) => {
-              const zoneId = feature.properties.zoneId || '';
-              
-              // Apply different colors to different fallback zones
-              if (zoneId === 'north') {
-                return { 
-                  className: 'fallback-zone-north',
-                  color: '#673AB7', 
-                  weight: 2, 
-                  opacity: 0.8, 
-                  fillOpacity: 0.2,
-                  dashArray: '5, 5' 
-                };
-              } else if (zoneId === 'west') {
-                return { 
-                  className: 'fallback-zone-west',
-                  color: '#2196F3', 
-                  weight: 2, 
-                  opacity: 0.8, 
-                  fillOpacity: 0.2,
-                  dashArray: '5, 5'
-                };
-              } else if (zoneId === 'south') {
-                return { 
-                  className: 'fallback-zone-south',
-                  color: '#4CAF50', 
-                  weight: 2, 
-                  opacity: 0.8, 
-                  fillOpacity: 0.2,
-                  dashArray: '5, 5'
-                };
-              } else {
-                return { 
-                  color: '#673AB7', 
-                  weight: 2, 
-                  opacity: 0.8, 
-                  fillOpacity: 0.2,
-                  dashArray: '5, 5'
-                };
-              }
-            },
-            onEachFeature: (feature, layer) => {
-              if (feature.properties) {
-                let popupContent = '<strong>Estimated Cleaning Zone</strong><br>';
-                popupContent += '<p>This is an approximated zone based on general constraints. The server is still calculating optimal zones.</p><br>';
-                popupContent += Object.entries(feature.properties)
-                  .filter(([prop]) => !['zoneId'].includes(prop))
-                  .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
-                  .join('<br>');
-                layer.bindPopup(popupContent);
-              }
-            }
-          }).addTo(map);
-          
-          // Show the fallback alert if not already shown
-          if (!temporaryFallbackShown) {
-            showFallbackZoneAlert();
-            temporaryFallbackShown = true;
-          }
-          usingFallbackZones = true;
-        } else {
-          // Regular styling for server-calculated zones
-          govLayers.recommendedZones.layer = L.geoJSON(geojson, {
-            style: govLayers.recommendedZones.style,
-            onEachFeature: (feature, layer) => {
-              if (feature.properties) {
-                let popupContent = '';
-                popupContent += Object.entries(feature.properties)
-                  .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
-                  .join('<br>');
-                layer.bindPopup(popupContent);
-              }
-            }
-          }).addTo(map);
-          
-          // Hide fallback alert if it was shown
-          const alert = document.getElementById('fallbackZoneAlert');
-          if (alert) alert.style.display = 'none';
-          usingFallbackZones = false;
+    // Apply styling for zones
+    govLayers.recommendedZones.layer = L.geoJSON(geojson, {
+      style: govLayers.recommendedZones.style,
+      onEachFeature: (feature, layer) => {
+        if (feature.properties) {
+          let popupContent = '';
+          popupContent += Object.entries(feature.properties)
+            .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
+            .join('<br>');
+          layer.bindPopup(popupContent);
         }
-
-        govLayers.recommendedZones.layer.on('click', e => {
-          L.DomEvent.stopPropagation(e);
-          tempClickLocation = e.latlng;
-          document.getElementById('confirmationModal').style.display = 'block';
-        });
-
-        const checkbox = document.getElementById('recommendedZonesCheckbox');
-        if (checkbox) {
-          checkbox.checked = true;
-          checkbox.addEventListener('change', e => {
-            e.target.checked ? map.addLayer(govLayers.recommendedZones.layer) : map.removeLayer(govLayers.recommendedZones.layer);
-          });
-        }
-
-        updateLayerLoadingState('recommendedZones', false);
-        return true;
-      } catch (error) {
-        console.error('Error updating recommendedZones layer:', error);
-        updateLayerLoadingState('recommendedZones', false);
-        return false;
       }
+    }).addTo(map);
+
+    govLayers.recommendedZones.layer.on('click', e => {
+      L.DomEvent.stopPropagation(e);
+      tempClickLocation = e.latlng;
+      document.getElementById('confirmationModal').style.display = 'block';
+    });
+
+    const checkbox = document.getElementById('recommendedZonesCheckbox');
+    if (checkbox) {
+      checkbox.checked = true;
+      checkbox.addEventListener('change', e => {
+        e.target.checked ? map.addLayer(govLayers.recommendedZones.layer) : map.removeLayer(govLayers.recommendedZones.layer);
+      });
     }
+
+    updateLayerLoadingState('recommendedZones', false);
+    return true;
+  } catch (error) {
+    console.error('Error updating recommendedZones layer:', error);
+    updateLayerLoadingState('recommendedZones', false);
+    return false;
+  }
+}
 
     async function loadRecommendedZones() {
-      updateLayerLoadingState('recommendedZones', true);
-      updateLoadingMessage('Loading potential cleaning zones...');
+  updateLayerLoadingState('recommendedZones', true);
+  updateLoadingMessage('Loading potential cleaning zones...');
+  
+  // Reset zone calculation status
+  zoneCalculationRetries = 0;
+  clearInterval(zoneCalculationPolling);
+  document.getElementById('zoneCalculationStatus').style.display = 'block';
+  
+  // First try to get from memory cache or localStorage
+  if (cachedData.recommendedZones) {
+    console.log('Using cached recommended zones');
+    updateRecommendedZonesLayer(cachedData.recommendedZones);
+    return Promise.resolve();
+  }
+  
+  const localData = getFromLocalStorage('recommendedZones');
+  if (localData) {
+    console.log('Using localStorage recommended zones');
+    cachedData.recommendedZones = localData;
+    updateRecommendedZonesLayer(localData);
+    return Promise.resolve();
+  }
+  
+  // Try to fetch from server - this might return a 202 status with progress info
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout for initial request
+    
+    const response = await fetch(`${apiBaseUrl}/api/recommendedZones`, { 
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (response.status === 202) {
+      // Calculation in progress - set up polling
+      const data = await response.json();
+      console.log('Zone calculation in progress:', data);
       
-      // Reset zone calculation status
-      zoneCalculationRetries = 0;
-      clearInterval(zoneCalculationPolling);
-      document.getElementById('zoneCalculationStatus').style.display = 'none';
+      // Show calculation status
+      document.getElementById('calculationProgress').textContent = `${data.progress || 0}%`;
+      document.getElementById('calculationTime').textContent = 
+        `Started: ${new Date(data.started).toLocaleTimeString()}`;
       
-      // First try to get from memory cache or localStorage
-      if (cachedData.recommendedZones) {
-        console.log('Using cached recommended zones');
-        updateRecommendedZonesLayer(cachedData.recommendedZones);
-        return Promise.resolve();
-      }
+      // Set up polling to check status
+      setupZoneCalculationPolling(data);
       
-      const localData = getFromLocalStorage('recommendedZones');
-      if (localData) {
-        console.log('Using localStorage recommended zones');
-        cachedData.recommendedZones = localData;
-        updateRecommendedZonesLayer(localData);
-        return Promise.resolve();
-      }
+      return Promise.resolve();
+    } else if (response.ok) {
+      // Calculation complete - use the data
+      const data = await response.json();
       
-      // If server is offline, use fallback immediately
-      if (!serverOnline && !API_CONFIG.mockMode) {
-        console.log('Server offline, using fallback for recommended zones');
-        showFallbackZoneAlert();
-        updateRecommendedZonesLayer(FALLBACK_RECOMMENDED_ZONES);
-        return Promise.resolve();
-      }
+      // Cache the results
+      cachedData.recommendedZones = data;
+      saveToLocalStorage('recommendedZones', data);
       
-      // Try to fetch from server - this might return a 202 status with progress info
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000); // 2-minute timeout for initial calculation
-        
-        const response = await fetch(`${apiBaseUrl}/api/recommendedZones`, { 
-          signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId);
-        
-        if (response.status === 202) {
-          // Calculation in progress - set up polling and show temporary zones
-          const data = await response.json();
-          console.log('Zone calculation in progress:', data);
-          
-          // Show temporary fallback zones
-          temporaryFallbackShown = true;
-          showFallbackZoneAlert();
-          updateRecommendedZonesLayer(FALLBACK_RECOMMENDED_ZONES);
-          
-          // Set up polling to check status
-          setupZoneCalculationPolling(data);
-          
-          return Promise.resolve();
-        } else if (response.ok) {
-          // Calculation complete - use the data
-          const data = await response.json();
-          
-          // Cache the results
-          cachedData.recommendedZones = data;
-          saveToLocalStorage('recommendedZones', data);
-          
-          // Update the map
-          updateRecommendedZonesLayer(data);
-          
-          return Promise.resolve();
-        } else {
-          throw new Error(`Server returned status ${response.status}`);
-        }
-      } catch (error) {
-        console.error('Error fetching recommended zones:', error);
-        
-        // Show fallback with explanation
-        showFallbackZoneAlert();
-        updateRecommendedZonesLayer(FALLBACK_RECOMMENDED_ZONES);
-        
-        // Check calculation status to see if it's still running
-        try {
-          const statusResponse = await fetch(`${apiBaseUrl}/api/zoneCalculationStatus`);
-          if (statusResponse.ok) {
-            const statusData = await statusResponse.json();
-            if (statusData.inProgress) {
-              // Set up polling to check status
-              setupZoneCalculationPolling(statusData);
-            }
-          }
-        } catch (e) {
-          console.warn('Failed to check calculation status:', e);
-        }
-        
-        return Promise.resolve();
-      }
+      // Update the map
+      updateRecommendedZonesLayer(data);
+      
+      return Promise.resolve();
+    } else {
+      throw new Error(`Server returned status ${response.status}`);
     }
+  } catch (error) {
+    console.error('Error fetching recommended zones:', error);
+    
+    // Check calculation status to see if it's still running
+    try {
+      const statusResponse = await fetch(`${apiBaseUrl}/api/zoneCalculationStatus`);
+      if (statusResponse.ok) {
+        const statusData = await statusResponse.json();
+        if (statusData.inProgress) {
+          // Set up polling to check status
+          setupZoneCalculationPolling(statusData);
+        } else {
+          // Show error message
+          document.getElementById('zoneCalculationStatus').innerHTML = `
+            <div style="color: #e53935; margin-top: 10px;">
+              Failed to load zones: ${error.message || 'Unknown error'}
+              <button id="retryZoneCalculation" class="retry-button">Retry</button>
+            </div>
+          `;
+          
+          // Add retry button event listener
+          document.getElementById('retryZoneCalculation').addEventListener('click', () => {
+            document.getElementById('zoneCalculationStatus').style.display = 'none';
+            loadRecommendedZones();
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to check calculation status:', e);
+      // Show generic error
+      document.getElementById('zoneCalculationStatus').innerHTML = `
+        <div style="color: #e53935; margin-top: 10px;">
+          Failed to load zones. 
+          <button id="retryZoneCalculation" class="retry-button">Retry</button>
+        </div>
+      `;
+      
+      // Add retry button event listener
+      document.getElementById('retryZoneCalculation').addEventListener('click', () => {
+        document.getElementById('zoneCalculationStatus').style.display = 'none';
+        loadRecommendedZones();
+      });
+    }
+    
+    return Promise.resolve();
+  } finally {
+    updateLayerLoadingState('recommendedZones', false);
+  }
+}
 
     // Create navigation aids layer
     function createNavigationAidsLayer() {

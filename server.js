@@ -58,42 +58,42 @@ class APIExplorer {
   async rateLimitedFetch(url, options = {}) {
     let retries = 0;
     const startTime = Date.now();
-    
+
     // Track API call attempt
     apiCallAttempts++;
-    
+
     while (retries < this.maxRetries) {
       try {
         // Add delay between requests to avoid rate limiting
         if (retries > 0) {
           await new Promise(resolve => setTimeout(resolve, this.delayBetweenRequests * Math.pow(2, retries - 1)));
         }
-        
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-        
+
         const response = await fetch(url, {
           headers: this.commonHeaders,
           ...options,
           signal: controller.signal
         });
-        
+
         clearTimeout(timeoutId);
-        
+
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
-        
+
         // Track successful API call
         apiCallsSucceeded++;
         lastSuccessfulExternalAPICall = Date.now();
-        
+
         console.log(`Fetched ${url} in ${Date.now() - startTime}ms`);
         return response;
       } catch (err) {
         retries++;
         console.warn(`Retry ${retries}/${this.maxRetries} for ${url} after ${Date.now() - startTime}ms: ${err.message}`);
-        
+
         if (retries === this.maxRetries) {
           throw err;
         }
@@ -104,14 +104,14 @@ class APIExplorer {
   async fetchGeoJSON(url, fallbackKey) {
     try {
       const cacheKey = `geojson_${url}`;
-      
+
       // Try to get from cache first
       const cachedData = dataCache.get(cacheKey);
       if (cachedData) {
         console.log(`Using cached data for: ${url}`);
         return cachedData;
       }
-      
+
       console.log(`Fetching data from: ${url}`);
       const response = await this.rateLimitedFetch(url);
       const data = await response.json();
@@ -121,49 +121,49 @@ class APIExplorer {
       }
 
       const cleanedData = this.cleanupGeoJSON(data);
-      
+
       // Set a cache TTL - 24 hours for most data
       const ttl = 86400; // 24 hours
       dataCache.set(cacheKey, cleanedData, ttl);
-      
+
       console.log(`Caching valid GeoJSON from: ${url} for ${ttl}s`);
       return cleanedData;
     } catch (err) {
       console.error(`Endpoint ${url} failed: ${err.message}`);
-      
+
       if (this.useFallback && fallbackKey) {
         return await this.getFallbackData(fallbackKey);
       }
-      
+
       throw err;
     }
   }
-  
+
   async getFallbackData(key) {
     try {
       // Check if fallback is already in cache
       const cacheKey = `fallback_${key}`;
       const cachedFallback = dataCache.get(cacheKey);
-      
+
       if (cachedFallback) {
         console.log(`Using cached fallback data for ${key}`);
         return cachedFallback;
       }
-      
+
       // Try to read from fallback file
       const fallbackPath = path.join(FALLBACK_DIR, `${key}.json`);
       const fallbackData = JSON.parse(await fs.readFile(fallbackPath, 'utf8'));
-      
+
       // Cache fallback data
       dataCache.set(cacheKey, fallbackData);
-      
+
       console.log(`Using fallback data for ${key} from file`);
       return fallbackData;
     } catch (err) {
       console.error(`Failed to get fallback data for ${key}: ${err.message}`);
       // Return empty GeoJSON as last resort
-      return { 
-        type: 'FeatureCollection', 
+      return {
+        type: 'FeatureCollection',
         features: [],
         metadata: {
           source: 'fallback',
@@ -183,18 +183,18 @@ class APIExplorer {
           console.warn(`Skipping invalid feature: ${JSON.stringify(feature)}`);
           return false;
         }
-        
+
         const validTypes = ["Point", "LineString", "Polygon", "MultiPoint", "MultiLineString", "MultiPolygon"];
         if (!validTypes.includes(feature.geometry.type)) {
           console.warn(`Skipping feature with invalid geometry type: ${feature.geometry.type}`);
           return false;
         }
-        
+
         if (!Array.isArray(feature.geometry.coordinates) || feature.geometry.coordinates.length === 0) {
           console.warn(`Skipping feature with invalid coordinates: ${JSON.stringify(feature)}`);
           return false;
         }
-        
+
         return true;
       });
 
@@ -209,15 +209,15 @@ class APIExplorer {
 
   isValidGeoJSON(data) {
     if (!data || typeof data !== 'object') return false;
-    
+
     if (data.type === "FeatureCollection") {
       return Array.isArray(data.features);
     }
-    
+
     if (data.type === "Feature") {
       return data.geometry && data.geometry.type;
     }
-    
+
     return ["Point", "LineString", "Polygon", "MultiPoint", "MultiLineString", "MultiPolygon", "GeometryCollection"].includes(data.type);
   }
 }
@@ -231,16 +231,16 @@ const ENDPOINTS = {
   cockburnSound: "https://services.slip.wa.gov.au/public/rest/services/Landgate_Public_Maps/Marine_Map_WA_3/MapServer/12/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
   mooringAreas: "https://services.slip.wa.gov.au/public/rest/services/Landgate_Public_Maps/Marine_Map_WA_3/MapServer/15/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
   marineInfrastructure: "https://services.slip.wa.gov.au/public/rest/services/Landgate_Public_Maps/Marine_Map_WA_3/MapServer/18/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
-  
+
   // Improved bathymetry data from Geoscience Australia
   bathymetry: "https://services.ga.gov.au/gis/rest/services/Australian_Bathymetry_Topography/MapServer/WMSServer?request=GetMap&service=WMS&version=1.3.0&layers=0&styles=&format=application/json;type=geojson&bbox=115.65,-32.15,115.85,-31.95&width=1024&height=1024&crs=EPSG:4326",
-  
+
   // New endpoints from Geoscience Australia
   stateWaters: "https://services.ga.gov.au/gis/rest/services/Australia_Coastal_Waters_Act_1980/MapServer/WMSServer?request=GetMap&service=WMS&version=1.3.0&layers=0&styles=&format=application/json;type=geojson&bbox=115.65,-32.15,115.85,-31.95&width=1024&height=1024&crs=EPSG:4326",
   commonwealthWaters: "https://services.ga.gov.au/gis/rest/services/Australia_Seas_Submerged_Lands_Act_1973/MapServer/WMSServer?request=GetMap&service=WMS&version=1.3.0&layers=0,1,2,3&styles=&format=application/json;type=geojson&bbox=115.65,-32.15,115.85,-31.95&width=1024&height=1024&crs=EPSG:4326",
   marineGeomorphic: "https://services.ga.gov.au/gis/rest/services/Geomorphic_Features_Australia_Marine_Jurisdiction/MapServer/WMSServer?request=GetMap&service=WMS&version=1.3.0&layers=0&styles=&format=application/json;type=geojson&bbox=115.65,-32.15,115.85,-31.95&width=1024&height=1024&crs=EPSG:4326",
   marineMultibeam: "https://services.ga.gov.au/gis/rest/services/Marine_Survey_Multibeam_Bathymetry/MapServer/WMSServer?request=GetMap&service=WMS&version=1.3.0&layers=0&styles=&format=application/json;type=geojson&bbox=115.65,-32.15,115.85,-31.95&width=1024&height=1024&crs=EPSG:4326",
-  
+
   // OpenStreetMap military areas (using Overpass API)
   militaryAreas: "https://overpass-api.de/api/interpreter?data=[out:json];area[name=\"Western Australia\"]->.searchArea;(node[military](area.searchArea);way[military](area.searchArea);relation[military](area.searchArea););out;out geom;"
 };
@@ -267,18 +267,18 @@ function transformOverpassToGeoJSON(data) {
   if (!data || !data.elements) {
     return { type: 'FeatureCollection', features: [] };
   }
-  
+
   const features = data.elements.map(element => {
-    const feature = { 
-      type: 'Feature', 
+    const feature = {
+      type: 'Feature',
       properties: { ...element.tags },
-      geometry: null 
+      geometry: null
     };
-    
+
     // Add type-specific properties
     feature.properties.id = element.id;
     feature.properties.type = element.type;
-    
+
     // Create geometry based on element type
     if (element.type === 'node') {
       feature.geometry = {
@@ -290,11 +290,11 @@ function transformOverpassToGeoJSON(data) {
         type: 'LineString',
         coordinates: element.geometry.map(node => [node.lon, node.lat])
       };
-      
+
       // If the way is closed, make it a polygon
-      if (element.geometry.length > 2 && 
-          element.geometry[0].lat === element.geometry[element.geometry.length-1].lat &&
-          element.geometry[0].lon === element.geometry[element.geometry.length-1].lon) {
+      if (element.geometry.length > 2 &&
+        element.geometry[0].lat === element.geometry[element.geometry.length - 1].lat &&
+        element.geometry[0].lon === element.geometry[element.geometry.length - 1].lon) {
         feature.geometry.type = 'Polygon';
         feature.geometry.coordinates = [feature.geometry.coordinates];
       }
@@ -309,15 +309,15 @@ function transformOverpassToGeoJSON(data) {
         };
       }
     }
-    
+
     // Skip features without geometry
     if (!feature.geometry) return null;
-    
+
     return feature;
   }).filter(f => f !== null);
-  
-  return { 
-    type: 'FeatureCollection', 
+
+  return {
+    type: 'FeatureCollection',
     features,
     metadata: {
       source: 'OpenStreetMap',
@@ -331,35 +331,35 @@ function transformOverpassToGeoJSON(data) {
 Object.entries(ENDPOINTS).forEach(([key, url]) => {
   app.get(`/api/${key}`, async (req, res) => {
     try {
-      const explorer = new APIExplorer({ 
-        delayBetweenRequests: 500, 
+      const explorer = new APIExplorer({
+        delayBetweenRequests: 500,
         timeout: 60000, // Longer timeout for some of these services
         maxRetries: 3,
         useFallback: true
       });
-      
+
       // Special handling for OpenStreetMap military areas
       if (key === 'militaryAreas') {
         try {
           // Try to get from cache first
           const cacheKey = `military_areas`;
           const cachedData = dataCache.get(cacheKey);
-          
+
           if (cachedData) {
             console.log(`Using cached military areas data`);
             return res.json(cachedData);
           }
-          
+
           // Fetch from Overpass API
           const response = await fetch(url);
           if (response.ok) {
             const data = await response.json();
             // Transform to GeoJSON
             const geoJSON = transformOverpassToGeoJSON(data);
-            
+
             // Cache the result
             dataCache.set(cacheKey, geoJSON, 86400); // Cache for 24 hours
-            
+
             return res.json(geoJSON);
           } else {
             throw new Error(`Overpass API responded with status ${response.status}`);
@@ -398,7 +398,7 @@ Object.entries(ENDPOINTS).forEach(([key, url]) => {
           });
         }
       }
-      
+
       // Special handling for Geoscience Australia services
       if (['stateWaters', 'commonwealthWaters', 'marineGeomorphic', 'marineMultibeam'].includes(key)) {
         try {
@@ -408,7 +408,7 @@ Object.entries(ENDPOINTS).forEach(([key, url]) => {
             return res.json(data);
           } catch (primaryError) {
             console.warn(`Primary endpoint for ${key} failed: ${primaryError.message}`);
-            
+
             // Try alternative endpoint if exists
             const altKey = `${key}Alt`;
             if (ALTERNATIVE_ENDPOINTS[altKey]) {
@@ -438,7 +438,7 @@ Object.entries(ENDPOINTS).forEach(([key, url]) => {
           });
         }
       }
-      
+
       // Special handling for bathymetry
       if (key === 'bathymetry') {
         try {
@@ -455,13 +455,13 @@ Object.entries(ENDPOINTS).forEach(([key, url]) => {
             // Global GEBCO data (subset for this region)
             "https://gis.ngdc.noaa.gov/arcgis/rest/services/web_mercator/gebco_2023_contours/MapServer/0/query?where=DEPTH%20IN%20(0,5,10,15,20,30,50,100,200)&outFields=DEPTH&geometry=%7B%22xmin%22%3A115.65%2C%22ymin%22%3A-32.15%2C%22xmax%22%3A115.85%2C%22ymax%22%3A-31.95%2C%22spatialReference%22%3A%7B%22wkid%22%3A4326%7D%7D&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&returnGeometry=true&f=geojson"
           ];
-          
+
           // Try each source until one works
           for (const bathyUrl of bathymetrySources) {
             try {
               console.log(`Trying bathymetry source: ${bathyUrl}`);
               const data = await explorer.fetchGeoJSON(bathyUrl, key);
-              
+
               // Check if we got actual contour data
               if (data && data.features && data.features.length > 0) {
                 console.log(`Successfully obtained bathymetry from: ${bathyUrl}`);
@@ -472,7 +472,7 @@ Object.entries(ENDPOINTS).forEach(([key, url]) => {
               console.warn(`Failed to fetch bathymetry from ${bathyUrl}:`, sourceError.message);
             }
           }
-          
+
           // If all sources failed, use enhanced fallback data
           throw new Error('All bathymetry sources failed');
         } catch (e) {
@@ -488,9 +488,9 @@ Object.entries(ENDPOINTS).forEach(([key, url]) => {
       }
     } catch (error) {
       console.error(`Error serving ${key}:`, error);
-      res.status(500).json({ 
-        error: 'Error fetching data', 
-        details: error.message, 
+      res.status(500).json({
+        error: 'Error fetching data',
+        details: error.message,
         endpoint: key,
         timestamp: new Date().toISOString()
       });
@@ -691,7 +691,7 @@ function getFrementleBathymetryFallback() {
       {
         type: 'Feature',
         properties: { depth: 3, name: 'Parmelia Bank' },
-        geometry: { 
+        geometry: {
           type: 'Polygon',
           coordinates: [[
             [115.745, -32.060],
@@ -706,7 +706,7 @@ function getFrementleBathymetryFallback() {
       {
         type: 'Feature',
         properties: { depth: 2, name: 'Success Bank' },
-        geometry: { 
+        geometry: {
           type: 'Polygon',
           coordinates: [[
             [115.730, -32.075],
@@ -731,7 +731,7 @@ function getFrementleBathymetryFallback() {
 // Standard study area for the region
 const STUDY_AREA = {
   type: 'Feature',
-  properties: { 
+  properties: {
     type: 'Study Area',
     description: 'Perth coastal region near Fremantle'
   },
@@ -753,53 +753,53 @@ const STUDY_AREA = {
 const NAUTICAL_REFERENCES = {
   type: 'FeatureCollection',
   features: [
-    { 
-      type: 'Feature', 
-      properties: { 
-        name: 'Fremantle Harbour Entrance', 
-        type: 'harbour_entrance', 
-        description: 'Main entrance to Fremantle Port' 
-      }, 
-      geometry: { 
-        type: 'Point', 
-        coordinates: [115.739, -32.055] 
-      } 
+    {
+      type: 'Feature',
+      properties: {
+        name: 'Fremantle Harbour Entrance',
+        type: 'harbour_entrance',
+        description: 'Main entrance to Fremantle Port'
+      },
+      geometry: {
+        type: 'Point',
+        coordinates: [115.739, -32.055]
+      }
     },
-    { 
-      type: 'Feature', 
-      properties: { 
-        name: 'Rottnest Island', 
-        type: 'island', 
-        description: 'Major island west of Fremantle' 
-      }, 
-      geometry: { 
-        type: 'Point', 
-        coordinates: [115.52, -32.00] 
-      } 
+    {
+      type: 'Feature',
+      properties: {
+        name: 'Rottnest Island',
+        type: 'island',
+        description: 'Major island west of Fremantle'
+      },
+      geometry: {
+        type: 'Point',
+        coordinates: [115.52, -32.00]
+      }
     },
-    { 
-      type: 'Feature', 
-      properties: { 
-        name: 'Success Harbour', 
-        type: 'harbour', 
-        description: 'Protected harbour in Cockburn Sound' 
-      }, 
-      geometry: { 
-        type: 'Point', 
-        coordinates: [115.763, -32.107] 
-      } 
+    {
+      type: 'Feature',
+      properties: {
+        name: 'Success Harbour',
+        type: 'harbour',
+        description: 'Protected harbour in Cockburn Sound'
+      },
+      geometry: {
+        type: 'Point',
+        coordinates: [115.763, -32.107]
+      }
     },
-    { 
-      type: 'Feature', 
-      properties: { 
-        name: 'Gage Roads', 
-        type: 'anchorage', 
-        description: 'Main ship anchorage area' 
-      }, 
-      geometry: { 
-        type: 'Point', 
-        coordinates: [115.68, -32.03] 
-      } 
+    {
+      type: 'Feature',
+      properties: {
+        name: 'Gage Roads',
+        type: 'anchorage',
+        description: 'Main ship anchorage area'
+      },
+      geometry: {
+        type: 'Point',
+        coordinates: [115.68, -32.03]
+      }
     }
   ]
 };
@@ -813,7 +813,7 @@ const CONSTRAINTS_TTL = 86400000; // 24 hours in ms
 function simplifyFeature(feature, tolerance = 0.001) {
   try {
     if (!feature.geometry) return feature;
-    
+
     const simplifiedFeature = turf.simplify(feature, { tolerance, highQuality: false });
     return simplifiedFeature;
   } catch (error) {
@@ -824,16 +824,42 @@ function simplifyFeature(feature, tolerance = 0.001) {
 
 // Endpoint to check calculation status
 app.get('/api/zoneCalculationStatus', (req, res) => {
-  res.json({
+  const status = {
     inProgress: zoneCalculations.inProgress,
     lastStarted: zoneCalculations.lastStarted,
     progress: zoneCalculations.progress,
     lastCompleted: zoneCalculations.lastCompleted,
-    error: zoneCalculations.error
-  });
+    error: zoneCalculations.error,
+    estimatedTimeRemaining: zoneCalculations.inProgress ? 
+      calculateEstimatedTimeRemaining(zoneCalculations.progress, zoneCalculations.lastStarted) : 
+      null
+  };
+  
+  res.json(status);
 });
 
+// Helper function to calculate estimated time remaining
+function calculateEstimatedTimeRemaining(progress, startTimeStr) {
+  if (!progress || !startTimeStr) return null;
+  
+  const startTime = new Date(startTimeStr).getTime();
+  const elapsedMs = Date.now() - startTime;
+  
+  if (progress < 5 || elapsedMs < 1000) return "Calculating...";
+  
+  // Calculate time remaining based on progress so far
+  const estimatedTotalMs = (elapsedMs / progress) * 100;
+  const remainingMs = estimatedTotalMs - elapsedMs;
+  
+  // Convert to readable format
+  if (remainingMs < 60000) {
+    return `About ${Math.ceil(remainingMs / 1000)} seconds remaining`;
+  } else {
+    return `About ${Math.ceil(remainingMs / 60000)} minutes remaining`;
+  }
+}
 // Calculate recommended zones by subtracting constraint areas from study area
+
 app.get('/api/recommendedZones', async (req, res) => {
   try {
     // Check cache first
@@ -877,7 +903,43 @@ app.get('/api/recommendedZones', async (req, res) => {
       }
     });
 
-    console.log('Starting calculation of potential cleaning zones...');
+    // Start background calculation using process.nextTick to avoid blocking
+    process.nextTick(async () => {
+      try {
+        await performZoneCalculation(cacheKey);
+      } catch (error) {
+        console.error('Background calculation failed:', error);
+        zoneCalculations.inProgress = false;
+        zoneCalculations.error = error.message;
+      }
+    });
+
+    // Immediately return with status
+    return res.status(202).json({
+      status: 'calculating',
+      message: 'Calculation started',
+      progress: 0,
+      started: zoneCalculations.lastStarted
+    });
+  } catch (error) {
+    console.error('Error handling recommended zones request:', error);
+    
+    // Update calculation status
+    zoneCalculations.inProgress = false;
+    zoneCalculations.error = error.message;
+    
+    // Return error without fallback zones
+    res.status(500).json({ 
+      error: 'Failed to calculate recommended zones', 
+      message: error.message,
+      retry: true
+    });
+  }
+});
+
+async function performZoneCalculation(cacheKey) {
+  console.log('Starting calculation of potential cleaning zones...');
+  try {
     const explorer = new APIExplorer({ 
       delayBetweenRequests: 1000, 
       maxRetries: 3, 
@@ -932,6 +994,9 @@ app.get('/api/recommendedZones', async (req, res) => {
           // Update progress - constraint fetching is 30% of total
           constraintCount++;
           zoneCalculations.progress = Math.min(30, Math.floor((constraintCount / constraintKeys.length) * 30));
+          
+          // Give the event loop a break
+          await new Promise(resolve => setTimeout(resolve, 50));
         } catch (error) {
           console.warn(`Failed to fetch ${key} for zone calculation: ${error.message}`);
           // Continue with other constraints
@@ -954,27 +1019,36 @@ app.get('/api/recommendedZones', async (req, res) => {
       features: []
     };
     
-    // Simplify in batches to prevent UI freezing
-    const batchSize = 10;
+    // Simplify in batches to prevent event loop blocking
+    const batchSize = 5; // Smaller batch size for better chunking
     for (let i = 0; i < allConstraints.features.length; i += batchSize) {
       const batch = allConstraints.features.slice(i, i + batchSize);
-      batch.forEach(feature => {
+      for (const feature of batch) {
         try {
-          const simplified = simplifyFeature(feature, 0.005); // Increase tolerance for better performance
+          const simplified = simplifyFeature(feature, 0.01); // Increased tolerance for better performance
           if (simplified && simplified.geometry) {
             simplifiedConstraints.features.push(simplified);
           }
         } catch (e) {
           console.warn(`Failed to simplify feature: ${e.message}`);
-          // Skip this feature
+          // Try with higher tolerance
+          try {
+            const simplified = simplifyFeature(feature, 0.05);
+            if (simplified && simplified.geometry) {
+              simplifiedConstraints.features.push(simplified);
+            }
+          } catch (err) {
+            console.warn(`Failed to simplify feature even with higher tolerance: ${err.message}`);
+            // Skip this feature
+          }
         }
-      });
+      }
       
       // Update progress - simplification is 10% of total
       zoneCalculations.progress = 35 + Math.min(10, Math.floor((i / allConstraints.features.length) * 10));
       
-      // Small delay to give the event loop a break
-      await new Promise(resolve => setTimeout(resolve, 10));
+      // Give the event loop a break between batches
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
     
     zoneCalculations.progress = 45;
@@ -987,7 +1061,7 @@ app.get('/api/recommendedZones', async (req, res) => {
     if (simplifiedConstraints.features.length > 0) {
       try {
         // Process constraints in smaller batches to avoid memory issues
-        const processingBatchSize = 5;
+        const processingBatchSize = 3; // Even smaller batch size
         const totalBatches = Math.ceil(simplifiedConstraints.features.length / processingBatchSize);
         
         for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
@@ -1031,8 +1105,18 @@ app.get('/api/recommendedZones', async (req, res) => {
           // Update progress - union operations are 40% of total
           zoneCalculations.progress = 45 + Math.min(40, Math.floor(((batchIndex + 1) / totalBatches) * 40));
           
-          // Small delay to prevent blocking
-          await new Promise(resolve => setTimeout(resolve, 20));
+          // Longer delay between batches to let the server breathe
+          await new Promise(resolve => setTimeout(resolve, 200));
+          
+          // Check if we need to garbage collect to prevent OOM
+          if (process.memoryUsage().heapUsed > 500 * 1024 * 1024) {
+            console.log('Memory usage high, forcing garbage collection');
+            // Signal to V8 that it would be a good time to GC
+            if (global.gc) {
+              global.gc();
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
         }
         
         // If we have a union, calculate difference with study area
@@ -1042,7 +1126,7 @@ app.get('/api/recommendedZones', async (req, res) => {
         if (constraintUnion) {
           try {
             // Use a simplified study area for better performance
-            const simplifiedStudyArea = simplifyFeature(STUDY_AREA, 0.001);
+            const simplifiedStudyArea = simplifyFeature(STUDY_AREA, 0.01);
             potentialZones = turf.difference(simplifiedStudyArea, constraintUnion);
           } catch (e) {
             console.error('Difference operation failed:', e);
@@ -1052,9 +1136,23 @@ app.get('/api/recommendedZones', async (req, res) => {
             // Start with the study area and progressively subtract each constraint
             potentialZones = STUDY_AREA;
             
-            for (const feature of simplifiedConstraints.features.slice(0, 20)) { // Limit to first 20 most important constraints
+            // Sort constraints by size to prioritize larger ones
+            simplifiedConstraints.features.sort((a, b) => {
+              try {
+                const areaA = turf.area(a);
+                const areaB = turf.area(b);
+                return areaB - areaA; // Largest first
+              } catch (e) {
+                return 0;
+              }
+            });
+            
+            // Only use the first 20 (largest/most important) constraints
+            for (const feature of simplifiedConstraints.features.slice(0, 20)) {
               try {
                 potentialZones = turf.difference(potentialZones, feature);
+                // Small delay to let the server breathe
+                await new Promise(resolve => setTimeout(resolve, 50));
               } catch (diffError) {
                 console.warn(`Individual difference failed: ${diffError.message}`);
                 // Continue with next constraint
@@ -1067,31 +1165,7 @@ app.get('/api/recommendedZones', async (req, res) => {
       } catch (e) {
         console.error('Union/difference operations failed:', e);
         zoneCalculations.error = e.message;
-        
-        // Create a more useful fallback - exclude only major constraints
-        try {
-          console.log('Generating alternative fallback zones...');
-          
-          // Start with the study area
-          potentialZones = STUDY_AREA;
-          
-          // Only use the largest few constraints (most important ones)
-          const majorConstraints = simplifiedConstraints.features
-            .slice(0, 10); // Use at most 10 constraints
-          
-          // Subtract each one individually
-          for (const constraint of majorConstraints) {
-            try {
-              potentialZones = turf.difference(potentialZones, constraint);
-            } catch (diffErr) {
-              console.warn(`Failed to subtract major constraint: ${diffErr.message}`);
-              // Continue with next constraint
-            }
-          }
-        } catch (fallbackErr) {
-          console.error('Fallback zone generation failed:', fallbackErr);
-          // Continue with study area as final fallback
-        }
+        throw e;
       }
     }
 
@@ -1120,114 +1194,19 @@ app.get('/api/recommendedZones', async (req, res) => {
     zoneCalculations.inProgress = false;
     zoneCalculations.lastCompleted = new Date().toISOString();
     
-    // Send response
     console.log('Zone calculation completed successfully');
-    res.set('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
-    res.json(result);
+    return result;
   } catch (error) {
-    console.error('Error calculating recommended zones:', error);
+    console.error('Zone calculation failed with error:', error);
     
     // Update calculation status
     zoneCalculations.inProgress = false;
     zoneCalculations.error = error.message;
     
-    // Try with a more sensible fallback - multiple areas that exclude the most important constraints
-    try {
-      console.log('Generating emergency fallback zones...');
-      
-      // Include a set of predefined potential zones for the Fremantle area
-      // These are based on general knowledge of the area and exclude major ports/marine parks
-      const fallbackZones = {
-        type: 'FeatureCollection',
-        features: [
-          {
-            type: 'Feature',
-            properties: { 
-              type: 'Potential Cleaning Zone (Fallback)',
-              description: 'North of Fremantle - calculation failed, using predefined zones',
-              error: error.message,
-              confidence: 'medium',
-              note: 'This is a predefined fallback zone based on general constraints'
-            },
-            geometry: {
-              type: 'Polygon',
-              coordinates: [[
-                [115.68, -31.98],
-                [115.75, -31.98],
-                [115.75, -32.02],
-                [115.68, -32.02],
-                [115.68, -31.98]
-              ]]
-            }
-          },
-          {
-            type: 'Feature',
-            properties: { 
-              type: 'Potential Cleaning Zone (Fallback)',
-              description: 'West of Fremantle - calculation failed, using predefined zones',
-              error: error.message,
-              confidence: 'medium',
-              note: 'This is a predefined fallback zone based on general constraints'
-            },
-            geometry: {
-              type: 'Polygon',
-              coordinates: [[
-                [115.65, -32.04],
-                [115.70, -32.04],
-                [115.70, -32.08],
-                [115.65, -32.08],
-                [115.65, -32.04]
-              ]]
-            }
-          },
-          {
-            type: 'Feature',
-            properties: { 
-              type: 'Potential Cleaning Zone (Fallback)',
-              description: 'South of Fremantle - calculation failed, using predefined zones',
-              error: error.message,
-              confidence: 'medium',
-              note: 'This is a predefined fallback zone based on general constraints'
-            },
-            geometry: {
-              type: 'Polygon',
-              coordinates: [[
-                [115.75, -32.10],
-                [115.82, -32.10],
-                [115.82, -32.14],
-                [115.75, -32.14],
-                [115.75, -32.10]
-              ]]
-            }
-          }
-        ]
-      };
-      
-      // Cache the fallback result for 1 hour only (shorter time since it's a fallback)
-      dataCache.set(cacheKey, fallbackZones, 3600);
-      
-      res.status(500).json(fallbackZones);
-    } catch (fallbackError) {
-      console.error('Even fallback zone generation failed:', fallbackError);
-      
-      // Last resort fallback
-      const minimalFallback = {
-        type: 'FeatureCollection',
-        features: [{
-          type: 'Feature',
-          properties: { 
-            type: 'Potential Cleaning Zone (Emergency Fallback)',
-            description: 'Unable to calculate zones - please try again later',
-            error: error.message
-          },
-          geometry: STUDY_AREA.geometry // Just use the whole study area as last resort
-        }]
-      };
-      
-      res.status(500).json(minimalFallback);
-    }
+    // Don't return fallback data - instead, throw the error to be handled
+    throw error;
   }
-});
+}
 
 // Provide nautical reference points
 app.get('/api/nauticalReferences', (req, res) => {
@@ -1236,9 +1215,9 @@ app.get('/api/nauticalReferences', (req, res) => {
     res.json(NAUTICAL_REFERENCES);
   } catch (error) {
     console.error('Error providing nautical references:', error);
-    res.status(500).json({ 
-      error: 'Error providing nautical references', 
-      details: error.message 
+    res.status(500).json({
+      error: 'Error providing nautical references',
+      details: error.message
     });
   }
 });
@@ -1247,15 +1226,15 @@ app.get('/api/nauticalReferences', (req, res) => {
 app.post('/api/analyzeProximity', async (req, res) => {
   try {
     const { lat, lng } = req.body;
-    
+
     if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
       return res.status(400).json({ error: 'Invalid or missing coordinates' });
     }
 
     const point = turf.point([parseFloat(lng), parseFloat(lat)]);
-    const explorer = new APIExplorer({ 
-      delayBetweenRequests: 1000, 
-      maxRetries: 3, 
+    const explorer = new APIExplorer({
+      delayBetweenRequests: 1000,
+      maxRetries: 3,
       timeout: 30000,
       useFallback: true
     });
@@ -1263,7 +1242,7 @@ app.post('/api/analyzeProximity', async (req, res) => {
     // Get constraints data if needed
     if (!cachedConstraints || !lastConstraintsUpdate || (Date.now() - lastConstraintsUpdate > CONSTRAINTS_TTL)) {
       cachedConstraints = {};
-      
+
       // Include both standard endpoints and added ones
       const allEndpoints = {
         ...ENDPOINTS,
@@ -1273,31 +1252,31 @@ app.post('/api/analyzeProximity', async (req, res) => {
           recommendedZones: undefined
         }
       };
-      
+
       for (const [key, url] of Object.entries(allEndpoints)) {
         if (!url) continue; // Skip undefined endpoints
-        
+
         try {
           const data = await explorer.fetchGeoJSON(url, key);
-          
+
           // Filter valid features
           const validFeatures = data.features.filter(feature => {
             if (!feature.geometry || !feature.geometry.type) {
               return false;
             }
-            
+
             if (!Array.isArray(feature.geometry.coordinates) || feature.geometry.coordinates.length === 0) {
               return false;
             }
-            
+
             const validTypes = ['Point', 'LineString', 'Polygon', 'MultiPoint', 'MultiLineString', 'MultiPolygon'];
             return validTypes.includes(feature.geometry.type);
           });
-          
+
           cachedConstraints[key] = { type: 'FeatureCollection', features: validFeatures };
         } catch (error) {
           console.warn(`Failed to fetch ${key} for analysis: ${error.message}`);
-          
+
           // Try to get fallback data
           try {
             const fallbackPath = path.join(FALLBACK_DIR, `${key}.json`);
@@ -1315,13 +1294,13 @@ app.post('/api/analyzeProximity', async (req, res) => {
           }
         }
       }
-      
+
       lastConstraintsUpdate = Date.now();
     }
 
     // Analysis results object
     const analysisResults = {};
-    
+
     // Analyze nautical references
     analysisResults.nauticalReferences = {};
     NAUTICAL_REFERENCES.features.forEach(feature => {
@@ -1330,7 +1309,7 @@ app.post('/api/analyzeProximity', async (req, res) => {
       const distance = turf.distance(point, featurePoint);
       const bearing = turf.bearing(point, featurePoint);
       const normalizedBearing = (bearing + 360) % 360;
-      
+
       // Get bearing text direction
       const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW', 'N'];
       const bearingText = directions[Math.round(normalizedBearing / 22.5)];
@@ -1350,34 +1329,34 @@ app.post('/api/analyzeProximity', async (req, res) => {
       if (data && data.features && data.features.length > 0) {
         try {
           // First check if point is inside any polygon
-          const containingFeature = data.features.find(feature => 
-            feature.geometry && 
-            (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') && 
+          const containingFeature = data.features.find(feature =>
+            feature.geometry &&
+            (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') &&
             turf.booleanPointInPolygon(point, feature)
           );
-          
+
           if (containingFeature) {
             // Point is inside this feature
             analysisResults[key] = {
               distance: "0.00",
               insideFeature: true,
-              featureName: containingFeature.properties.NAME || 
-                           containingFeature.properties.Name || 
-                           containingFeature.properties.name || 
-                           'Unnamed Feature'
+              featureName: containingFeature.properties.NAME ||
+                containingFeature.properties.Name ||
+                containingFeature.properties.name ||
+                'Unnamed Feature'
             };
             continue;
           }
-          
+
           // If not inside, find nearest feature
           try {
             // Try more accurate calculation using nearestPointOnLine if possible
             let minDistance = Number.MAX_VALUE;
             let nearestFeatureName = '';
-            
+
             for (const feature of data.features) {
               if (!feature.geometry) continue;
-              
+
               let distance;
               if (feature.geometry.type === 'Point') {
                 const featurePoint = turf.point(feature.geometry.coordinates);
@@ -1407,16 +1386,16 @@ app.post('/api/analyzeProximity', async (req, res) => {
                 const center = turf.centroid(feature);
                 distance = turf.distance(point, center);
               }
-              
+
               if (distance < minDistance) {
                 minDistance = distance;
-                nearestFeatureName = feature.properties.NAME || 
-                                    feature.properties.Name || 
-                                    feature.properties.name || 
-                                    'Unnamed Feature';
+                nearestFeatureName = feature.properties.NAME ||
+                  feature.properties.Name ||
+                  feature.properties.name ||
+                  'Unnamed Feature';
               }
             }
-            
+
             // Add to results
             if (minDistance < Number.MAX_VALUE) {
               analysisResults[key] = {
@@ -1448,17 +1427,17 @@ app.post('/api/analyzeProximity', async (req, res) => {
             const featureCollection = turf.featureCollection(cleanedFeatures);
             const nearest = turf.nearestPoint(point, featureCollection);
             const distance = turf.distance(point, nearest);
-            
+
             // Find the original feature index
             const nearestCoords = nearest.geometry.coordinates;
             let originalFeature = data.features[0]; // Fallback
-            
+
             for (const feature of data.features) {
               if (!feature.geometry) continue;
-              
-              if (feature.geometry.type === 'Point' && 
-                  feature.geometry.coordinates[0] === nearestCoords[0] && 
-                  feature.geometry.coordinates[1] === nearestCoords[1]) {
+
+              if (feature.geometry.type === 'Point' &&
+                feature.geometry.coordinates[0] === nearestCoords[0] &&
+                feature.geometry.coordinates[1] === nearestCoords[1]) {
                 originalFeature = feature;
                 break;
               }
@@ -1468,10 +1447,10 @@ app.post('/api/analyzeProximity', async (req, res) => {
             analysisResults[key] = {
               distance: distance.toFixed(2),
               insideFeature: false,
-              featureName: originalFeature.properties.NAME || 
-                          originalFeature.properties.Name || 
-                          originalFeature.properties.name || 
-                          'Unnamed Feature'
+              featureName: originalFeature.properties.NAME ||
+                originalFeature.properties.Name ||
+                originalFeature.properties.name ||
+                'Unnamed Feature'
             };
           }
         } catch (e) {
@@ -1486,10 +1465,10 @@ app.post('/api/analyzeProximity', async (req, res) => {
     // Check if point is in recommended zones
     try {
       const recommendedZones = dataCache.get('potential_cleaning_zones');
-      
+
       if (recommendedZones && recommendedZones.features && recommendedZones.features.length > 0) {
         analysisResults.recommendedZone = {
-          insideRecommendedZone: recommendedZones.features.some(f => 
+          insideRecommendedZone: recommendedZones.features.some(f =>
             turf.booleanPointInPolygon(point, f)
           )
         };
@@ -1497,12 +1476,12 @@ app.post('/api/analyzeProximity', async (req, res) => {
         // If no cached zones, try to get from endpoint
         try {
           const zonesResponse = await fetch(`${req.protocol}://${req.get('host')}/api/recommendedZones`);
-          
+
           if (zonesResponse.ok) {
             const zonesData = await zonesResponse.json();
-            
+
             analysisResults.recommendedZone = {
-              insideRecommendedZone: zonesData.features.some(f => 
+              insideRecommendedZone: zonesData.features.some(f =>
                 turf.booleanPointInPolygon(point, f)
               )
             };
@@ -1522,17 +1501,17 @@ app.post('/api/analyzeProximity', async (req, res) => {
     }
 
     // Send analysis results
-    res.json({ 
-      coordinates: { lat, lng }, 
+    res.json({
+      coordinates: { lat, lng },
       results: analysisResults,
-      timestamp: new Date().toISOString() 
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     console.error('Error in proximity analysis:', error);
-    res.status(500).json({ 
-      error: 'Error performing proximity analysis', 
+    res.status(500).json({
+      error: 'Error performing proximity analysis',
       details: error.message,
-      timestamp: new Date().toISOString() 
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1541,15 +1520,15 @@ app.post('/api/analyzeProximity', async (req, res) => {
 app.get('/warmup', async (req, res) => {
   try {
     console.log('Server warmup initiated');
-    
+
     // Create explorer with longer timeouts for initial data fetch
-    const explorer = new APIExplorer({ 
-      delayBetweenRequests: 1000, 
-      maxRetries: 2, 
+    const explorer = new APIExplorer({
+      delayBetweenRequests: 1000,
+      maxRetries: 2,
       timeout: 30000,
       useFallback: true
     });
-    
+
     // Fetch all constraint data in parallel
     await Promise.allSettled(
       Object.entries(ENDPOINTS).map(async ([key, url]) => {
@@ -1562,7 +1541,7 @@ app.get('/warmup', async (req, res) => {
         }
       })
     );
-    
+
     // Ensure recommended zones are calculated
     try {
       const cacheKey = 'potential_cleaning_zones';
@@ -1573,16 +1552,16 @@ app.get('/warmup', async (req, res) => {
     } catch (error) {
       console.warn('Warmup for recommendedZones failed:', error);
     }
-    
-    res.status(200).json({ 
-      status: 'ok', 
+
+    res.status(200).json({
+      status: 'ok',
       message: 'Server warmed up',
       timestamp: new Date().toISOString()
     });
   } catch (error) {
     console.error('Warmup failed:', error);
-    res.status(500).json({ 
-      error: 'Warmup failed', 
+    res.status(500).json({
+      error: 'Warmup failed',
       details: error.message,
       timestamp: new Date().toISOString()
     });
@@ -1611,7 +1590,7 @@ app.get('/healthcheck', (req, res) => {
     },
     memory_usage: process.memoryUsage()
   };
-  
+
   res.status(200).json(status);
 });
 
@@ -1647,8 +1626,8 @@ app.get('/', (req, res) => {
 
 // Handle 404 errors
 app.use((req, res) => {
-  res.status(404).json({ 
-    error: 'Not Found', 
+  res.status(404).json({
+    error: 'Not Found',
     message: `The requested endpoint ${req.path} was not found.`,
     timestamp: new Date().toISOString()
   });
@@ -1657,8 +1636,8 @@ app.use((req, res) => {
 // Handle server errors
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
-  res.status(500).json({ 
-    error: 'Internal Server Error', 
+  res.status(500).json({
+    error: 'Internal Server Error',
     message: 'An unexpected error occurred on the server.',
     timestamp: new Date().toISOString()
   });
@@ -1668,10 +1647,10 @@ app.use((err, req, res, next) => {
 app.listen(port, async () => {
   console.log(`Server running at http://localhost:${port}`);
   console.log(`API endpoints available at http://localhost:${port}/api/`);
-  
+
   // Create fallback directory
   await ensureFallbackDir();
-  
+
   // Attempt warmup
   try {
     await fetch(`http://localhost:${port}/warmup`);
