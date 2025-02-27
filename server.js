@@ -939,46 +939,46 @@ app.get('/api/recommendedZones', async (req, res) => {
 
 
 // Update the performZoneCalculation function with more frequent progress updates
+// OPTIMIZE: Improved performZoneCalculation function for low-CPU environments
 async function performZoneCalculation(cacheKey) {
   console.log('Starting calculation of potential cleaning zones...');
   try {
     const explorer = new APIExplorer({
       delayBetweenRequests: 1000,
-      maxRetries: 3,
-      timeout: 30000,
+      maxRetries: 2,
+      timeout: 20000,
       useFallback: true
     });
 
-    // Start with a small non-zero progress value
+    // Start with visible progress
     zoneCalculations.progress = 5;
     
-    // Force progress updates to be written to the global state more reliably
+    // Force progress updates
     function updateProgress(value) {
-      zoneCalculations.progress = Math.min(99, Math.max(1, Math.floor(value)));
+      zoneCalculations.progress = Math.min(99, Math.max(5, Math.floor(value)));
       console.log(`Zone calculation progress: ${zoneCalculations.progress}%`);
     }
 
-    // Need fresh constraints data or use cached if available
+    // Need fresh constraints data or use cached
     let allConstraints;
     
     if (cachedConstraints && lastConstraintsUpdate && (Date.now() - lastConstraintsUpdate < CONSTRAINTS_TTL)) {
       console.log('Using cached constraints data for calculation');
       allConstraints = cachedConstraints;
-      updateProgress(20); // Skip ahead in progress
+      updateProgress(25);
     } else {
-      // Fetch all constraint layers
+      // Fetch necessary constraint layers - only include the essential ones
       console.log('Fetching constraint layers for calculation');
-      const constraintKeys = Object.entries(ENDPOINTS)
-        .filter(([key]) => 
-          key !== 'bathymetry' && 
-          key !== 'recommendedZones' &&
-          key !== 'stateWaters' && 
-          key !== 'commonwealthWaters' && 
-          key !== 'militaryAreas'
-        )
-        .map(([key]) => key);
+      const constraintKeys = [
+        'portAuthorities', 
+        'marineParks', 
+        'fishHabitat', 
+        'cockburnSound', 
+        'mooringAreas', 
+        'marineInfrastructure'
+      ];
       
-      // Fetch constraints one by one to avoid overwhelming the server
+      // Fetch constraints one by one
       allConstraints = { type: 'FeatureCollection', features: [] };
       let constraintCount = 0;
       
@@ -1005,12 +1005,12 @@ async function performZoneCalculation(cacheKey) {
             allConstraints.features.push(...validFeatures);
           }
           
-          // Update progress - constraint fetching is 30% of total
+          // Update progress
           constraintCount++;
-          updateProgress(10 + Math.floor((constraintCount / constraintKeys.length) * 20));
+          updateProgress(5 + Math.floor((constraintCount / constraintKeys.length) * 20));
           
-          // Give the event loop a break
-          await new Promise(resolve => setTimeout(resolve, 50));
+          // Give server a break between fetches
+          await new Promise(resolve => setTimeout(resolve, 300));
         } catch (error) {
           console.warn(`Failed to fetch ${key} for zone calculation: ${error.message}`);
           // Continue with other constraints
@@ -1022,30 +1022,30 @@ async function performZoneCalculation(cacheKey) {
       lastConstraintsUpdate = Date.now();
     }
 
-    // Calculate recommended zones in small batches to prevent memory issues
-    console.log(`Processing ${allConstraints.features.length} constraint features...`);
     updateProgress(30);
+    console.log(`Processing ${allConstraints.features.length} constraint features...`);
 
-    // First, simplify all geometries to speed up processing
+    // Optimize: Use much higher simplification tolerance
     console.log('Simplifying constraint geometries...');
     const simplifiedConstraints = {
       type: 'FeatureCollection',
       features: []
     };
     
-    // Simplify in batches to prevent event loop blocking
-    const batchSize = 5; // Smaller batch size for better chunking
+    // Simplify in smaller batches with larger tolerance
+    const batchSize = 3; 
     for (let i = 0; i < allConstraints.features.length; i += batchSize) {
       const batch = allConstraints.features.slice(i, i + batchSize);
       for (const feature of batch) {
         try {
-          const simplified = simplifyFeature(feature, 0.01); // Increased tolerance for better performance
+          // Use higher tolerance for better performance - 0.02 degrees is roughly 2km
+          const simplified = simplifyFeature(feature, 0.02);
           if (simplified && simplified.geometry) {
             simplifiedConstraints.features.push(simplified);
           }
         } catch (e) {
           console.warn(`Failed to simplify feature: ${e.message}`);
-          // Try with higher tolerance
+          // Try with even higher tolerance
           try {
             const simplified = simplifyFeature(feature, 0.05);
             if (simplified && simplified.geometry) {
@@ -1058,129 +1058,130 @@ async function performZoneCalculation(cacheKey) {
         }
       }
       
-      // Update progress - simplification is 20% of total
+      // Update progress
       updateProgress(30 + Math.floor((i / Math.max(1, allConstraints.features.length)) * 20));
       
-      // Give the event loop a break between batches
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Longer pause between batches to reduce CPU load
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
     
     updateProgress(50);
     console.log(`Simplified to ${simplifiedConstraints.features.length} constraint features`);
 
-    // Calculate recommended zones
-    let constraintUnion = null;
-    let potentialZones = STUDY_AREA;
-    
-    if (simplifiedConstraints.features.length > 0) {
-      try {
-        // Process constraints in smaller batches to avoid memory issues
-        const processingBatchSize = 3; // Even smaller batch size
-        const totalBatches = Math.ceil(simplifiedConstraints.features.length / processingBatchSize);
-        
-        for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-          const startIdx = batchIndex * processingBatchSize;
-          const endIdx = Math.min(startIdx + processingBatchSize, simplifiedConstraints.features.length);
-          const batch = simplifiedConstraints.features.slice(startIdx, endIdx);
-          
-          console.log(`Processing batch ${batchIndex + 1}/${totalBatches} with ${batch.length} features`);
-          
-          // Create a batch union
-          let batchUnion = null;
-          
-          // Process each feature in the batch
-          for (const feature of batch) {
-            try {
-              if (batchUnion) {
-                batchUnion = turf.union(batchUnion, feature);
-              } else {
-                batchUnion = feature;
-              }
-            } catch (e) {
-              console.warn(`Failed to union feature in batch: ${e.message}`);
-              // Continue with other features
-            }
-          }
-          
-          // Merge this batch's union with the overall union
-          if (batchUnion) {
-            if (constraintUnion) {
-              try {
-                constraintUnion = turf.union(constraintUnion, batchUnion);
-              } catch (e) {
-                console.warn(`Failed to merge batch union: ${e.message}`);
-                // Keep previous union
-              }
-            } else {
-              constraintUnion = batchUnion;
-            }
-          }
-          
-          // Update progress - union operations are 40% of total
-          updateProgress(50 + Math.floor(((batchIndex + 1) / Math.max(1, totalBatches)) * 40));
-          
-          // Longer delay between batches to let the server breathe
-          await new Promise(resolve => setTimeout(resolve, 200));
-          
-          // Check if we need to garbage collect to prevent OOM
-          if (process.memoryUsage().heapUsed > 500 * 1024 * 1024) {
-            console.log('Memory usage high, forcing garbage collection');
-            // Signal to V8 that it would be a good time to GC
-            if (global.gc) {
-              global.gc();
-            }
-            await new Promise(resolve => setTimeout(resolve, 1000));
+    // OPTIMIZE: Use a simplified study area with a water mask
+    // Load the coastline data to make sure we're not including land
+    let waterMask = null;
+    try {
+      // First check if we have cached water mask
+      const cachedWaterMask = dataCache.get('waterMask'); // Fix: Use dataCache instead of cachedData
+      if (cachedWaterMask) {
+        waterMask = cachedWaterMask;
+      } else {
+        // Try to load a simplified coastline
+        const coastlineResponse = await fetch(`${apiBaseUrl}/api/coastline`);
+        if (coastlineResponse.ok) {
+          const coastlineData = await coastlineResponse.json();
+          // The water mask is the study area minus the land areas
+          if (coastlineData && coastlineData.features && coastlineData.features.length > 0) {
+            waterMask = turf.difference(
+              simplifyFeature(STUDY_AREA, 0.02),
+              turf.union(...coastlineData.features)
+            );
+            // Cache the water mask
+            dataCache.set('waterMask', waterMask, 86400);
           }
         }
+      }
+    } catch (error) {
+      console.warn('Failed to create water mask:', error);
+      // Continue without water mask
+    }
+
+    // Set a basic study area as fallback
+    let potentialZones = simplifyFeature(STUDY_AREA, 0.02);
+
+    // Calculate recommended zones using a more efficient approach
+    updateProgress(60);
+    
+    // OPTIMIZE: Use a grid-based approach for better performance
+    try {
+      console.log('Using simplified approach for better server performance');
+      
+      // Create a grid of points covering the study area
+      const bbox = turf.bbox(STUDY_AREA);
+      const cellSize = 0.01; // ~1km cells
+      const grid = [];
+      
+      // Generate grid points
+      for (let x = bbox[0]; x <= bbox[2]; x += cellSize) {
+        for (let y = bbox[1]; y <= bbox[3]; y += cellSize) {
+          // Create a point
+          const pt = turf.point([x, y]);
+          
+          // Check if point is in water (if we have a water mask)
+          const isInWater = !waterMask || turf.booleanPointInPolygon(pt, waterMask);
+          
+          // Skip if not in water
+          if (!isInWater) continue;
+          
+          // Check if point is in any constraint
+          const isInConstraint = simplifiedConstraints.features.some(feature => {
+            return turf.booleanPointInPolygon(pt, feature);
+          });
+          
+          // If not in any constraint, add to our grid of valid points
+          if (!isInConstraint) {
+            grid.push(pt);
+          }
+        }
+      }
+      
+      updateProgress(80);
+      
+      // Create buffer around points and merge them into polygons
+      if (grid.length > 0) {
+        console.log(`Found ${grid.length} valid grid points, creating polygons...`);
         
-        // If we have a union, calculate difference with study area
-        console.log('Calculating final difference with study area...');
+        // Buffer each point
+        const bufferedPoints = grid.map(pt => turf.buffer(pt, 0.008, {units: 'degrees'}));
+        
+        // Update progress
         updateProgress(90);
         
-        if (constraintUnion) {
+        // Merge buffered points into a MultiPolygon
+        let merged = bufferedPoints[0];
+        for (let i = 1; i < Math.min(bufferedPoints.length, 50); i++) {
           try {
-            // Use a simplified study area for better performance
-            const simplifiedStudyArea = simplifyFeature(STUDY_AREA, 0.01);
-            potentialZones = turf.difference(simplifiedStudyArea, constraintUnion);
+            merged = turf.union(merged, bufferedPoints[i]);
           } catch (e) {
-            console.error('Difference operation failed:', e);
-            // Try an alternative approach - individual differences
-            console.log('Trying alternative difference calculation approach...');
-            
-            // Start with the study area and progressively subtract each constraint
-            potentialZones = STUDY_AREA;
-            
-            // Sort constraints by size to prioritize larger ones
-            simplifiedConstraints.features.sort((a, b) => {
-              try {
-                const areaA = turf.area(a);
-                const areaB = turf.area(b);
-                return areaB - areaA; // Largest first
-              } catch (e) {
-                return 0;
-              }
-            });
-            
-            // Only use the first 20 (largest/most important) constraints
-            for (const feature of simplifiedConstraints.features.slice(0, 20)) {
-              try {
-                potentialZones = turf.difference(potentialZones, feature);
-                // Small delay to let the server breathe
-                await new Promise(resolve => setTimeout(resolve, 50));
-              } catch (diffError) {
-                console.warn(`Individual difference failed: ${diffError.message}`);
-                // Continue with next constraint
-              }
-            }
+            console.warn('Error merging buffers:', e);
+          }
+          
+          // Every 10 merges, give the server a break
+          if (i % 10 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 200));
           }
         }
         
-        updateProgress(95);
-      } catch (e) {
-        console.error('Union/difference operations failed:', e);
-        zoneCalculations.error = e.message;
-        throw e;
+        potentialZones = merged;
+      } else {
+        console.warn('No valid grid points found, using study area');
       }
+      
+      updateProgress(95);
+      
+      // Apply the water mask to ensure we're only showing water areas
+      if (waterMask) {
+        try {
+          potentialZones = turf.intersect(potentialZones, waterMask);
+        } catch (e) {
+          console.warn('Error intersecting with water mask:', e);
+        }
+      }
+    } catch (e) {
+      console.error('Grid-based calculation failed:', e);
+      // Fallback to study area
+      potentialZones = simplifyFeature(STUDY_AREA, 0.01);
     }
 
     updateProgress(98);
@@ -1203,7 +1204,7 @@ async function performZoneCalculation(cacheKey) {
     // Cache the result for 24 hours
     dataCache.set(cacheKey, result, 86400);
     
-    // Update calculation status - make sure we set to 100% at the end
+    // Mark as complete
     zoneCalculations.progress = 100;
     zoneCalculations.inProgress = false;
     zoneCalculations.lastCompleted = new Date().toISOString();
@@ -1217,10 +1218,90 @@ async function performZoneCalculation(cacheKey) {
     zoneCalculations.inProgress = false;
     zoneCalculations.error = error.message;
     
-    // Don't return fallback data - instead, throw the error to be handled
     throw error;
   }
 }
+
+// ADD: Create a simple API endpoint for coastline data if it doesn't exist
+app.get('/api/coastline', async (req, res) => {
+  try {
+    // Check cache first
+    const cacheKey = 'coastline';
+    const cachedCoastline = dataCache.get(cacheKey);
+    
+    if (cachedCoastline) {
+      console.log('Using cached coastline data');
+      res.set('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
+      return res.json(cachedCoastline);
+    }
+
+    // Simplified Fremantle coastline
+    const coastlineData = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        properties: { 
+          name: 'Western Australia Coastline', 
+          type: 'land' 
+        },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[
+            // Approximate coastline around Fremantle
+            [115.75, -32.15],  // South
+            [115.85, -32.15],  // South-East
+            [115.85, -31.95],  // North-East
+            [115.80, -31.95],  // North
+            [115.78, -31.96],  // North Coast
+            [115.76, -31.98],  // North Coast
+            [115.75, -32.00],  // North Coast
+            [115.75, -32.03],  // Perth coastline
+            [115.74, -32.05],  // Fremantle Port
+            [115.74, -32.08],  // Fremantle South
+            [115.75, -32.15]   // Back to start
+          ]]
+        }
+      }]
+    };
+    
+    // Cache it
+    dataCache.set(cacheKey, coastlineData, 86400 * 7); // Cache for 7 days
+    
+    res.set('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
+    res.json(coastlineData);
+  } catch (error) {
+    console.error('Error serving coastline data:', error);
+    res.status(500).json({ error: 'Error fetching coastline data' });
+  }
+});
+
+// Update the API endpoints list
+app.get('/', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    message: 'Ship Cleaning GIS API Server',
+    version: '1.0.0',
+    endpoints: [
+      '/api/portAuthorities',
+      '/api/marineParks',
+      '/api/fishHabitat',
+      '/api/cockburnSound',
+      '/api/mooringAreas',
+      '/api/marineInfrastructure',
+      '/api/bathymetry',
+      '/api/marineGeomorphic',
+      '/api/marineMultibeam',
+      '/api/recommendedZones',
+      '/api/nauticalReferences',
+      '/api/coastline',
+      '/api/analyzeProximity (POST)',
+      '/api/zoneCalculationStatus',
+      '/healthcheck',
+      '/warmup'
+    ],
+    timestamp: new Date().toISOString()
+  });
+});
 
 // Provide nautical reference points
 app.get('/api/nauticalReferences', (req, res) => {

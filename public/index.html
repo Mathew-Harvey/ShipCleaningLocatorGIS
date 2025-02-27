@@ -1463,6 +1463,48 @@
             progressFill.style.width = `${progress}%`;
           }
 
+          function updateLegend() {
+  const legendContainer = document.querySelector('.legend');
+  if (!legendContainer) return;
+  
+  // Clear existing legend items
+  const existingItems = legendContainer.querySelectorAll('.legend-item');
+  existingItems.forEach(item => item.remove());
+  
+  // Add header back if it was removed
+  if (!legendContainer.querySelector('h4')) {
+    const header = document.createElement('h4');
+    header.textContent = 'Legend';
+    legendContainer.appendChild(header);
+  }
+  
+  // Add legend items for active layers
+  const activeItems = [
+    { key: 'portAuthorities', color: '#FF4081', label: 'Port Authority Areas' },
+    { key: 'marineParks', color: '#4CAF50', label: 'Marine Parks & Reserves' },
+    { key: 'fishHabitat', color: '#FF9800', label: 'Fish Habitat Areas' },
+    { key: 'cockburnSound', color: '#2196F3', label: 'Cockburn Sound' },
+    { key: 'marineGeomorphic', color: '#008080', label: 'Marine Geomorphic Features' },
+    { key: 'mooringAreas', color: '#9C27B0', label: 'Mooring Areas' },
+    { key: 'marineInfrastructure', color: '#795548', label: 'Marine Infrastructure' },
+    { key: 'recommendedZones', color: '#673AB7', label: 'Potential Cleaning Zones' },
+    { key: 'navigationAids', color: '#000', label: 'Navigation Aids' },
+    { key: 'marineTraffic', color: '#FF5500', label: 'Marine Traffic (AIS)' },
+    { key: 'weather', color: '#00AAFF', label: 'Weather & Wind' },
+    { key: 'navigationalWarnings', color: '#FF0000', label: 'Navigational Warnings' },
+    { key: 'bathymetry', color: '#3d83b3', label: 'Bathymetry (Depth Contours)' }
+  ];
+  
+  activeItems.forEach(item => {
+    const legendItem = document.createElement('div');
+    legendItem.className = 'legend-item';
+    legendItem.innerHTML = `
+      <div class="legend-color" style="background: ${item.color}"></div> ${item.label}
+    `;
+    legendContainer.appendChild(legendItem);
+  });
+}
+
           // Updated function to display error state and add retry button
           function updateLayerLoadingState(key, isLoading, error = null) {
             const control = document.querySelector(`#${key}Checkbox`);
@@ -1771,26 +1813,40 @@
             const progressDisplay = document.getElementById('calculationProgress');
             const timeDisplay = document.getElementById('calculationTime');
 
-            if (calculationStatus) calculationStatus.style.display = 'block';
+            if (calculationStatus) {
+              calculationStatus.style.display = 'block';
 
-            // Initialize progress
+              // Make sure the progress is visible in the sidebar
+              document.getElementById('sidebar').scrollTo({
+                top: calculationStatus.offsetTop - 100,
+                behavior: 'smooth'
+              });
+            }
+
+            // Initialize progress with a minimum value
             zoneCalculationStartTime = Date.now();
-            const initialProgress = initialData.progress || 5; // Use a minimum of 5% to show something is happening
-            if (progressDisplay) progressDisplay.textContent = `${initialProgress}%`;
+            const initialProgress = Math.max(5, initialData.progress || 0);
 
-            // Add progress bar immediately
+            if (progressDisplay) {
+              progressDisplay.textContent = `${initialProgress}%`;
+            }
+
+            // Create progress bar if it doesn't exist
             if (!document.getElementById('zoneProgressBar')) {
               const progressBarHTML = `
-      <div id="zoneProgressBar" style="width: 100%; background-color: #f3f3f3; height: 8px; margin-top: 5px; border-radius: 4px;">
+      <div id="zoneProgressBar" style="width: 100%; background-color: #f3f3f3; height: 8px; margin-top: 5px; border-radius: 4px; overflow: hidden;">
         <div id="zoneProgressFill" style="height: 100%; width: ${initialProgress}%; background-color: #673AB7; border-radius: 4px; transition: width 0.5s ease;"></div>
       </div>
     `;
               calculationStatus.insertAdjacentHTML('beforeend', progressBarHTML);
             } else {
-              document.getElementById('zoneProgressFill').style.width = `${initialProgress}%`;
+              const progressFill = document.getElementById('zoneProgressFill');
+              if (progressFill) {
+                progressFill.style.width = `${initialProgress}%`;
+              }
             }
 
-            // Poll more frequently for updates
+            // Poll more frequently
             clearInterval(zoneCalculationPolling);
             zoneCalculationPolling = setInterval(async () => {
               try {
@@ -1798,15 +1854,18 @@
                 if (response.ok) {
                   const data = await response.json();
 
-                  // Update progress - ensure we always show some progress
+                  // Make sure progress is at least 5% to show activity
                   const progressValue = Math.max(5, data.progress || 0);
+
+                  // Update progress text
                   if (progressDisplay) {
                     progressDisplay.textContent = `${progressValue}%`;
+                  }
 
-                    // Update progress bar
-                    if (document.getElementById('zoneProgressFill')) {
-                      document.getElementById('zoneProgressFill').style.width = `${progressValue}%`;
-                    }
+                  // Update progress bar if it exists
+                  const progressFill = document.getElementById('zoneProgressFill');
+                  if (progressFill) {
+                    progressFill.style.width = `${progressValue}%`;
                   }
 
                   // Update elapsed time and estimated time remaining
@@ -1814,7 +1873,7 @@
                   if (timeDisplay) {
                     timeDisplay.innerHTML = `
             Elapsed: ${formatTime(elapsedSeconds)}<br>
-            ${data.estimatedTimeRemaining ? `Estimated remaining: ${data.estimatedTimeRemaining}` : 'Calculating...'}
+            ${data.estimatedTimeRemaining ? `Estimated: ${data.estimatedTimeRemaining}` : 'Calculating...'}
           `;
                   }
 
@@ -1823,30 +1882,35 @@
                     console.log('Zone calculation complete, fetching results');
                     clearInterval(zoneCalculationPolling);
 
-                    // Reset status display after a moment
-                    setTimeout(() => {
-                      if (calculationStatus) calculationStatus.style.display = 'none';
-                    }, 3000);
+                    // Show completion message but keep status visible for a moment
+                    if (progressDisplay) progressDisplay.textContent = `100%`;
+                    if (progressFill) progressFill.style.width = `100%`;
+                    if (timeDisplay) timeDisplay.textContent = `Completed in ${formatTime(elapsedSeconds)}`;
 
-                    // Fetch and update the zones
-                    try {
-                      const response = await fetch(`${apiBaseUrl}/api/recommendedZones`);
-                      if (response.ok) {
-                        const zonesData = await response.json();
+                    // Fetch and update the zones after a brief delay
+                    setTimeout(async () => {
+                      try {
+                        // Hide status display
+                        if (calculationStatus) calculationStatus.style.display = 'none';
 
-                        // Update the layer with real data
-                        cachedData.recommendedZones = zonesData;
-                        saveToLocalStorage('recommendedZones', zonesData);
+                        const response = await fetch(`${apiBaseUrl}/api/recommendedZones`);
+                        if (response.ok) {
+                          const zonesData = await response.json();
 
-                        updateRecommendedZonesLayer(zonesData);
+                          // Update the layer with real data
+                          cachedData.recommendedZones = zonesData;
+                          saveToLocalStorage('recommendedZones', zonesData);
 
-                        // Show success message
-                        showSuccessMessage('Recommended zones calculated successfully!');
+                          updateRecommendedZonesLayer(zonesData);
+
+                          // Show success message
+                          showSuccessMessage('Recommended zones calculated successfully!');
+                        }
+                      } catch (error) {
+                        console.error('Failed to fetch completed zones:', error);
+                        showError('Could not load recommended zones. Please try again.');
                       }
-                    } catch (error) {
-                      console.error('Failed to fetch completed zones:', error);
-                      showError('Could not load recommended zones. Please try again.');
-                    }
+                    }, 1500);
                   }
 
                   // If error occurred
@@ -1864,7 +1928,7 @@
             `;
 
                       // Add retry button event listener
-                      document.getElementById('retryZoneCalculation').addEventListener('click', () => {
+                      document.getElementById('retryZoneCalculation')?.addEventListener('click', () => {
                         calculationStatus.style.display = 'none';
                         loadRecommendedZones();
                       });
@@ -1881,9 +1945,8 @@
               } catch (error) {
                 console.warn('Error checking zone calculation status:', error);
               }
-            }, 3000); // Poll every 3 seconds for more responsive updates
+            }, 2000); // Check every 2 seconds
           }
-
 
           async function analyzeLocation(lat, lng) {
             try {
@@ -2102,57 +2165,57 @@
           }
 
           function displayAnalysisResults(data) {
-            const container = document.getElementById('analysisContainer');
-            const content = document.getElementById('analysisContent');
-            content.innerHTML = '';
+  const container = document.getElementById('analysisContainer');
+  const content = document.getElementById('analysisContent');
+  content.innerHTML = '';
 
-            const locationInfo = document.createElement('div');
-            locationInfo.innerHTML = `<strong>Coordinates:</strong> ${data.coordinates.lat.toFixed(5)}, ${data.coordinates.lng.toFixed(5)}`;
-            content.appendChild(locationInfo);
+  const locationInfo = document.createElement('div');
+  locationInfo.innerHTML = `<strong>Coordinates:</strong> ${data.coordinates.lat.toFixed(5)}, ${data.coordinates.lng.toFixed(5)}`;
+  content.appendChild(locationInfo);
+  
+  // Add offline indicator if server is offline
+  if (!serverOnline) {
+    const offlineNote = document.createElement('div');
+    offlineNote.innerHTML = `<p style="color: #F44336;"><strong>Note:</strong> Using offline analysis mode. Results may not be as accurate as online mode.</p>`;
+    content.appendChild(offlineNote);
+  }
 
-            // Add offline indicator if server is offline
-            if (!serverOnline) {
-              const offlineNote = document.createElement('div');
-              offlineNote.innerHTML = `<p style="color: #F44336;"><strong>Note:</strong> Using offline analysis mode. Results may not be as accurate as online mode.</p>`;
-              content.appendChild(offlineNote);
-            }
+  // Check if calculation is in progress by looking at the DOM
+  if (document.getElementById('calculationProgress') && 
+      document.getElementById('zoneCalculationStatus').style.display !== 'none') {
+    const calculationNote = document.createElement('div');
+    calculationNote.innerHTML = `<p style="color: #FFA000;"><strong>Note:</strong> Recommended cleaning zone calculation is in progress. Results may update after calculation completes.</p>`;
+    content.appendChild(calculationNote);
+  }
 
-            // Check if calculation is in progress by looking at the DOM
-            if (document.getElementById('calculationProgress') &&
-              document.getElementById('zoneCalculationStatus').style.display !== 'none') {
-              const calculationNote = document.createElement('div');
-              calculationNote.innerHTML = `<p style="color: #FFA000;"><strong>Note:</strong> Recommended cleaning zone calculation is in progress. Results may update after calculation completes.</p>`;
-              content.appendChild(calculationNote);
-            }
-
-            if (data.results.nauticalReferences) {
-              const nauticalDiv = document.createElement('div');
-              nauticalDiv.className = 'analysis-item';
-              let nauticalHTML = `
+  if (data.results.nauticalReferences) {
+    const nauticalDiv = document.createElement('div');
+    nauticalDiv.className = 'analysis-item';
+    let nauticalHTML = `
       <div class="analysis-header">
         <div class="analysis-icon" style="background: #0066CC"></div>
         <div class="analysis-title">Nautical References</div>
       </div>
       <div class="analysis-detail">
     `;
-              Object.entries(data.results.nauticalReferences).forEach(([name, info]) => {
-                nauticalHTML += `
+    Object.entries(data.results.nauticalReferences).forEach(([name, info]) => {
+      nauticalHTML += `
         <p><strong>${name}</strong> (${info.type}): 
            ${info.distance} km ${info.bearingText} (${info.bearing}°)
            <br><small>${info.description}</small>
         </p>
       `;
-              });
-              nauticalHTML += `</div>`;
-              nauticalDiv.innerHTML = nauticalHTML;
-              content.appendChild(nauticalDiv);
-            }
+    });
+    nauticalHTML += `</div>`;
+    nauticalDiv.innerHTML = nauticalHTML;
+    content.appendChild(nauticalDiv);
+  }
 
-            if (data.results.recommendedZone) {
-              const recommendationDiv = document.createElement('div');
-              recommendationDiv.className = 'analysis-item';
-              if (data.results.recommendedZone.error) {
-                recommendationDiv.innerHTML = `
+  if (data.results.recommendedZone) {
+    const recommendationDiv = document.createElement('div');
+    recommendationDiv.className = 'analysis-item';
+    if (data.results.recommendedZone.error) {
+      recommendationDiv.innerHTML = `
         <div class="analysis-header">
           <div class="analysis-icon" style="background: ${layerColors.recommendedZones}"></div>
           <div class="analysis-title">Site Suitability</div>
@@ -2161,9 +2224,9 @@
           <p class="analysis-warning">Unable to determine if this location is in a recommended zone.</p>
         </div>
       `;
-              } else {
-                const isRecommended = data.results.recommendedZone.insideRecommendedZone;
-                recommendationDiv.innerHTML = `
+    } else {
+      const isRecommended = data.results.recommendedZone.insideRecommendedZone;
+      recommendationDiv.innerHTML = `
         <div class="analysis-header">
           <div class="analysis-icon" style="background: ${layerColors.recommendedZones}"></div>
           <div class="analysis-title">Site Suitability</div>
@@ -2172,20 +2235,21 @@
           <p class="${isRecommended ? 'analysis-good' : 'analysis-warning'}">
             This location is ${isRecommended ? '' : 'NOT '}within a recommended cleaning zone.
           </p>
+          ${data.results.recommendedZone.calculationInProgress ? '<p><small>Note: Zone calculation in progress - results may change.</small></p>' : ''}
         </div>
       `;
-              }
-              content.appendChild(recommendationDiv);
-            }
+    }
+    content.appendChild(recommendationDiv);
+  }
 
-            const constraints = Object.entries(data.results).filter(([key]) => key !== 'recommendedZone' && key !== 'nauticalReferences');
-            for (const [key, result] of constraints) {
-              const constraintDiv = document.createElement('div');
-              constraintDiv.className = 'analysis-item';
-              const constraintName = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+  const constraints = Object.entries(data.results).filter(([key]) => key !== 'recommendedZone' && key !== 'nauticalReferences');
+  for (const [key, result] of constraints) {
+    const constraintDiv = document.createElement('div');
+    constraintDiv.className = 'analysis-item';
+    const constraintName = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
 
-              if (result.error || result.status) {
-                constraintDiv.innerHTML = `
+    if (result.error || result.status) {
+      constraintDiv.innerHTML = `
         <div class="analysis-header">
           <div class="analysis-icon" style="background: ${layerColors[key] || '#666'}"></div>
           <div class="analysis-title">${constraintName}</div>
@@ -2194,14 +2258,14 @@
           <p>No proximity data available: ${result.error || result.status}</p>
         </div>
       `;
-              } else {
-                const isInside = result.insideFeature === true;
-                const isClose = !isInside && result.distance && parseFloat(result.distance) < 1.0;
-                const statusClass = isInside || isClose ? 'analysis-warning' : 'analysis-good';
-                const statusText = isInside ? `Inside ${result.featureName}` :
-                  isClose ? `Close to ${result.featureName} (${result.distance} km)` :
-                    `${result.distance} km from nearest ${result.featureName}`;
-                constraintDiv.innerHTML = `
+    } else {
+      const isInside = result.insideFeature === true;
+      const isClose = !isInside && result.distance && parseFloat(result.distance) < 1.0;
+      const statusClass = isInside || isClose ? 'analysis-warning' : 'analysis-good';
+      const statusText = isInside ? `Inside ${result.featureName}` :
+        isClose ? `Close to ${result.featureName} (${result.distance} km)` :
+          `${result.distance} km from nearest ${result.featureName}`;
+      constraintDiv.innerHTML = `
         <div class="analysis-header">
           <div class="analysis-icon" style="background: ${layerColors[key] || '#666'}"></div>
           <div class="analysis-title">${constraintName}</div>
@@ -2210,167 +2274,207 @@
           <p class="${statusClass}">${statusText}</p>
         </div>
       `;
-              }
-              content.appendChild(constraintDiv);
-            }
+    }
+    content.appendChild(constraintDiv);
+  }
 
-            container.style.display = 'block';
-          }
+  container.style.display = 'block';
+}
 
+          
           function updateRecommendedZonesLayer(geojson) {
-            try {
-              if (govLayers.recommendedZones.layer) map.removeLayer(govLayers.recommendedZones.layer);
+  try {
+    if (govLayers.recommendedZones.layer) {
+      map.removeLayer(govLayers.recommendedZones.layer);
+    }
 
-              // Apply styling for zones
-              govLayers.recommendedZones.layer = L.geoJSON(geojson, {
-                style: govLayers.recommendedZones.style,
-                onEachFeature: (feature, layer) => {
-                  if (feature.properties) {
-                    let popupContent = '';
-                    popupContent += Object.entries(feature.properties)
-                      .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
-                      .join('<br>');
-                    layer.bindPopup(popupContent);
-                  }
-                }
-              }).addTo(map);
+    // Ensure we have valid GeoJSON
+    if (!geojson || !geojson.features || !geojson.features.length) {
+      console.error('Invalid recommended zones data:', geojson);
+      showError('Invalid recommended zones data received from server');
+      updateLayerLoadingState('recommendedZones', false);
+      return false;
+    }
 
-              govLayers.recommendedZones.layer.on('click', e => {
-                L.DomEvent.stopPropagation(e);
-                tempClickLocation = e.latlng;
-                document.getElementById('confirmationModal').style.display = 'block';
-              });
+    // Apply styling for zones
+    govLayers.recommendedZones.layer = L.geoJSON(geojson, {
+      style: govLayers.recommendedZones.style,
+      onEachFeature: (feature, layer) => {
+        if (feature.properties) {
+          let popupContent = '';
+          popupContent += Object.entries(feature.properties)
+            .map(([prop, value]) => `<strong>${prop}:</strong> ${value}`)
+            .join('<br>');
+          layer.bindPopup(popupContent);
+        }
+      }
+    }).addTo(map);
 
-              const checkbox = document.getElementById('recommendedZonesCheckbox');
-              if (checkbox) {
-                checkbox.checked = true;
-                checkbox.addEventListener('change', e => {
-                  e.target.checked ? map.addLayer(govLayers.recommendedZones.layer) : map.removeLayer(govLayers.recommendedZones.layer);
-                });
-              }
+    govLayers.recommendedZones.layer.on('click', e => {
+      L.DomEvent.stopPropagation(e);
+      tempClickLocation = e.latlng;
+      document.getElementById('confirmationModal').style.display = 'block';
+    });
 
-              updateLayerLoadingState('recommendedZones', false);
-              return true;
-            } catch (error) {
-              console.error('Error updating recommendedZones layer:', error);
-              updateLayerLoadingState('recommendedZones', false);
-              return false;
-            }
+    const checkbox = document.getElementById('recommendedZonesCheckbox');
+    if (checkbox) {
+      checkbox.checked = true;
+      checkbox.addEventListener('change', e => {
+        e.target.checked ? map.addLayer(govLayers.recommendedZones.layer) : map.removeLayer(govLayers.recommendedZones.layer);
+      });
+    }
+
+    // Update the legend to reflect current layers
+    updateLegend();
+    
+    updateLayerLoadingState('recommendedZones', false);
+    return true;
+  } catch (error) {
+    console.error('Error updating recommendedZones layer:', error);
+    updateLayerLoadingState('recommendedZones', false);
+    showError('Failed to update recommended zones: ' + error.message);
+    return false;
+  }
+}
+
+
+async function loadRecommendedZones() {
+  updateLayerLoadingState('recommendedZones', true);
+  updateLoadingMessage('Loading potential cleaning zones...');
+  
+  // Reset zone calculation status
+  zoneCalculationRetries = 0;
+  clearInterval(zoneCalculationPolling);
+  
+  const calculationStatus = document.getElementById('zoneCalculationStatus');
+  if (calculationStatus) {
+    calculationStatus.style.display = 'block';
+    // Default content while waiting for server response
+    calculationStatus.innerHTML = `
+      <div>Calculating recommended zones: <span id="calculationProgress" class="calculation-progress">0%</span></div>
+      <div id="calculationTime" class="calculation-time">Starting calculation...</div>
+    `;
+  }
+  
+  // First try to get from memory cache or localStorage
+  if (cachedData.recommendedZones) {
+    console.log('Using cached recommended zones');
+    updateRecommendedZonesLayer(cachedData.recommendedZones);
+    if (calculationStatus) calculationStatus.style.display = 'none';
+    return Promise.resolve();
+  }
+  
+  const localData = getFromLocalStorage('recommendedZones');
+  if (localData) {
+    console.log('Using localStorage recommended zones');
+    cachedData.recommendedZones = localData;
+    updateRecommendedZonesLayer(localData);
+    if (calculationStatus) calculationStatus.style.display = 'none';
+    return Promise.resolve();
+  }
+  
+  // Try to fetch from server
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    
+    const response = await fetch(`${apiBaseUrl}/api/recommendedZones`, {
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (response.status === 202) {
+      // Calculation in progress - set up polling
+      const data = await response.json();
+      console.log('Zone calculation in progress:', data);
+      
+      // Show the calculation status and progress
+      const progressDisplay = document.getElementById('calculationProgress');
+      const timeDisplay = document.getElementById('calculationTime');
+      
+      if (progressDisplay) {
+        progressDisplay.textContent = `${Math.max(1, data.progress || 0)}%`;
+      }
+      
+      if (timeDisplay) {
+        timeDisplay.textContent = `Started: ${new Date(data.started).toLocaleTimeString()}`;
+      }
+      
+      // Set up polling to check status
+      setupZoneCalculationPolling(data);
+      
+      return Promise.resolve();
+    } else if (response.ok) {
+      // Calculation complete - use the data
+      const data = await response.json();
+      
+      // Cache the results
+      cachedData.recommendedZones = data;
+      saveToLocalStorage('recommendedZones', data);
+      
+      // Update the map
+      updateRecommendedZonesLayer(data);
+      
+      // Hide calculation status
+      if (calculationStatus) calculationStatus.style.display = 'none';
+      
+      return Promise.resolve();
+    } else {
+      throw new Error(`Server returned status ${response.status}`);
+    }
+  } catch (error) {
+    console.error('Error fetching recommended zones:', error);
+    
+    // Check calculation status to see if it's still running
+    try {
+      const statusResponse = await fetch(`${apiBaseUrl}/api/zoneCalculationStatus`);
+      if (statusResponse.ok) {
+        const statusData = await statusResponse.json();
+        if (statusData.inProgress) {
+          // Set up polling to check status
+          setupZoneCalculationPolling(statusData);
+        } else {
+          // Show error message
+          if (calculationStatus) {
+            calculationStatus.innerHTML = `
+              <div style="color: #e53935; margin-top: 10px;">
+                Failed to load zones: ${error.message || 'Unknown error'}
+                <button id="retryZoneCalculation" class="retry-button">Retry</button>
+              </div>
+            `;
+            
+            // Add retry button event listener
+            document.getElementById('retryZoneCalculation')?.addEventListener('click', () => {
+              calculationStatus.style.display = 'none';
+              loadRecommendedZones();
+            });
           }
-
-          async function loadRecommendedZones() {
-            updateLayerLoadingState('recommendedZones', true);
-            updateLoadingMessage('Loading potential cleaning zones...');
-
-            // Reset zone calculation status
-            zoneCalculationRetries = 0;
-            clearInterval(zoneCalculationPolling);
-            document.getElementById('zoneCalculationStatus').style.display = 'block';
-
-            // First try to get from memory cache or localStorage
-            if (cachedData.recommendedZones) {
-              console.log('Using cached recommended zones');
-              updateRecommendedZonesLayer(cachedData.recommendedZones);
-              return Promise.resolve();
-            }
-
-            const localData = getFromLocalStorage('recommendedZones');
-            if (localData) {
-              console.log('Using localStorage recommended zones');
-              cachedData.recommendedZones = localData;
-              updateRecommendedZonesLayer(localData);
-              return Promise.resolve();
-            }
-
-            // Try to fetch from server - this might return a 202 status with progress info
-            try {
-              const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout for initial request
-
-              const response = await fetch(`${apiBaseUrl}/api/recommendedZones`, {
-                signal: controller.signal
-              });
-
-              clearTimeout(timeoutId);
-
-              if (response.status === 202) {
-                // Calculation in progress - set up polling
-                const data = await response.json();
-                console.log('Zone calculation in progress:', data);
-
-                // Show calculation status
-                document.getElementById('calculationProgress').textContent = `${data.progress || 0}%`;
-                document.getElementById('calculationTime').textContent =
-                  `Started: ${new Date(data.started).toLocaleTimeString()}`;
-
-                // Set up polling to check status
-                setupZoneCalculationPolling(data);
-
-                return Promise.resolve();
-              } else if (response.ok) {
-                // Calculation complete - use the data
-                const data = await response.json();
-
-                // Cache the results
-                cachedData.recommendedZones = data;
-                saveToLocalStorage('recommendedZones', data);
-
-                // Update the map
-                updateRecommendedZonesLayer(data);
-
-                return Promise.resolve();
-              } else {
-                throw new Error(`Server returned status ${response.status}`);
-              }
-            } catch (error) {
-              console.error('Error fetching recommended zones:', error);
-
-              // Check calculation status to see if it's still running
-              try {
-                const statusResponse = await fetch(`${apiBaseUrl}/api/zoneCalculationStatus`);
-                if (statusResponse.ok) {
-                  const statusData = await statusResponse.json();
-                  if (statusData.inProgress) {
-                    // Set up polling to check status
-                    setupZoneCalculationPolling(statusData);
-                  } else {
-                    // Show error message
-                    document.getElementById('zoneCalculationStatus').innerHTML = `
-            <div style="color: #e53935; margin-top: 10px;">
-              Failed to load zones: ${error.message || 'Unknown error'}
-              <button id="retryZoneCalculation" class="retry-button">Retry</button>
-            </div>
-          `;
-
-                    // Add retry button event listener
-                    document.getElementById('retryZoneCalculation').addEventListener('click', () => {
-                      document.getElementById('zoneCalculationStatus').style.display = 'none';
-                      loadRecommendedZones();
-                    });
-                  }
-                }
-              } catch (e) {
-                console.warn('Failed to check calculation status:', e);
-                // Show generic error
-                document.getElementById('zoneCalculationStatus').innerHTML = `
-        <div style="color: #e53935; margin-top: 10px;">
-          Failed to load zones. 
-          <button id="retryZoneCalculation" class="retry-button">Retry</button>
-        </div>
-      `;
-
-                // Add retry button event listener
-                document.getElementById('retryZoneCalculation').addEventListener('click', () => {
-                  document.getElementById('zoneCalculationStatus').style.display = 'none';
-                  loadRecommendedZones();
-                });
-              }
-
-              return Promise.resolve();
-            } finally {
-              updateLayerLoadingState('recommendedZones', false);
-            }
-          }
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to check calculation status:', e);
+      // Show generic error
+      if (calculationStatus) {
+        calculationStatus.innerHTML = `
+          <div style="color: #e53935; margin-top: 10px;">
+            Failed to load zones. 
+            <button id="retryZoneCalculation" class="retry-button">Retry</button>
+          </div>
+        `;
+        
+        // Add retry button event listener
+        document.getElementById('retryZoneCalculation')?.addEventListener('click', () => {
+          calculationStatus.style.display = 'none';
+          loadRecommendedZones();
+        });
+      }
+    }
+    
+    updateLayerLoadingState('recommendedZones', false);
+    return Promise.resolve();
+  }
+}
 
           // Create navigation aids layer
           function createNavigationAidsLayer() {
