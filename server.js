@@ -937,18 +937,26 @@ app.get('/api/recommendedZones', async (req, res) => {
   }
 });
 
+
+// Update the performZoneCalculation function with more frequent progress updates
 async function performZoneCalculation(cacheKey) {
   console.log('Starting calculation of potential cleaning zones...');
   try {
-    const explorer = new APIExplorer({ 
-      delayBetweenRequests: 1000, 
-      maxRetries: 3, 
+    const explorer = new APIExplorer({
+      delayBetweenRequests: 1000,
+      maxRetries: 3,
       timeout: 30000,
-      useFallback: true 
+      useFallback: true
     });
 
-    // Update progress
+    // Start with a small non-zero progress value
     zoneCalculations.progress = 5;
+    
+    // Force progress updates to be written to the global state more reliably
+    function updateProgress(value) {
+      zoneCalculations.progress = Math.min(99, Math.max(1, Math.floor(value)));
+      console.log(`Zone calculation progress: ${zoneCalculations.progress}%`);
+    }
 
     // Need fresh constraints data or use cached if available
     let allConstraints;
@@ -956,12 +964,18 @@ async function performZoneCalculation(cacheKey) {
     if (cachedConstraints && lastConstraintsUpdate && (Date.now() - lastConstraintsUpdate < CONSTRAINTS_TTL)) {
       console.log('Using cached constraints data for calculation');
       allConstraints = cachedConstraints;
-      zoneCalculations.progress = 30; // Skip ahead in progress
+      updateProgress(20); // Skip ahead in progress
     } else {
       // Fetch all constraint layers
       console.log('Fetching constraint layers for calculation');
       const constraintKeys = Object.entries(ENDPOINTS)
-        .filter(([key]) => key !== 'bathymetry' && key !== 'recommendedZones')
+        .filter(([key]) => 
+          key !== 'bathymetry' && 
+          key !== 'recommendedZones' &&
+          key !== 'stateWaters' && 
+          key !== 'commonwealthWaters' && 
+          key !== 'militaryAreas'
+        )
         .map(([key]) => key);
       
       // Fetch constraints one by one to avoid overwhelming the server
@@ -993,7 +1007,7 @@ async function performZoneCalculation(cacheKey) {
           
           // Update progress - constraint fetching is 30% of total
           constraintCount++;
-          zoneCalculations.progress = Math.min(30, Math.floor((constraintCount / constraintKeys.length) * 30));
+          updateProgress(10 + Math.floor((constraintCount / constraintKeys.length) * 20));
           
           // Give the event loop a break
           await new Promise(resolve => setTimeout(resolve, 50));
@@ -1010,7 +1024,7 @@ async function performZoneCalculation(cacheKey) {
 
     // Calculate recommended zones in small batches to prevent memory issues
     console.log(`Processing ${allConstraints.features.length} constraint features...`);
-    zoneCalculations.progress = 35;
+    updateProgress(30);
 
     // First, simplify all geometries to speed up processing
     console.log('Simplifying constraint geometries...');
@@ -1044,14 +1058,14 @@ async function performZoneCalculation(cacheKey) {
         }
       }
       
-      // Update progress - simplification is 10% of total
-      zoneCalculations.progress = 35 + Math.min(10, Math.floor((i / allConstraints.features.length) * 10));
+      // Update progress - simplification is 20% of total
+      updateProgress(30 + Math.floor((i / Math.max(1, allConstraints.features.length)) * 20));
       
       // Give the event loop a break between batches
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     
-    zoneCalculations.progress = 45;
+    updateProgress(50);
     console.log(`Simplified to ${simplifiedConstraints.features.length} constraint features`);
 
     // Calculate recommended zones
@@ -1103,7 +1117,7 @@ async function performZoneCalculation(cacheKey) {
           }
           
           // Update progress - union operations are 40% of total
-          zoneCalculations.progress = 45 + Math.min(40, Math.floor(((batchIndex + 1) / totalBatches) * 40));
+          updateProgress(50 + Math.floor(((batchIndex + 1) / Math.max(1, totalBatches)) * 40));
           
           // Longer delay between batches to let the server breathe
           await new Promise(resolve => setTimeout(resolve, 200));
@@ -1121,7 +1135,7 @@ async function performZoneCalculation(cacheKey) {
         
         // If we have a union, calculate difference with study area
         console.log('Calculating final difference with study area...');
-        zoneCalculations.progress = 85;
+        updateProgress(90);
         
         if (constraintUnion) {
           try {
@@ -1161,7 +1175,7 @@ async function performZoneCalculation(cacheKey) {
           }
         }
         
-        zoneCalculations.progress = 95;
+        updateProgress(95);
       } catch (e) {
         console.error('Union/difference operations failed:', e);
         zoneCalculations.error = e.message;
@@ -1169,7 +1183,7 @@ async function performZoneCalculation(cacheKey) {
       }
     }
 
-    zoneCalculations.progress = 98;
+    updateProgress(98);
 
     // Create result GeoJSON
     const result = {
@@ -1189,7 +1203,7 @@ async function performZoneCalculation(cacheKey) {
     // Cache the result for 24 hours
     dataCache.set(cacheKey, result, 86400);
     
-    // Update calculation status
+    // Update calculation status - make sure we set to 100% at the end
     zoneCalculations.progress = 100;
     zoneCalculations.inProgress = false;
     zoneCalculations.lastCompleted = new Date().toISOString();
@@ -1608,11 +1622,8 @@ app.get('/', (req, res) => {
       '/api/mooringAreas',
       '/api/marineInfrastructure',
       '/api/bathymetry',
-      '/api/stateWaters',
-      '/api/commonwealthWaters',
       '/api/marineGeomorphic',
       '/api/marineMultibeam',
-      '/api/militaryAreas',
       '/api/recommendedZones',
       '/api/nauticalReferences',
       '/api/analyzeProximity (POST)',
