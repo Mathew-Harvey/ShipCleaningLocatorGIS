@@ -2315,19 +2315,86 @@
               const startTime = Date.now();
               await updateProgress(5, 'Fetching constraint data...');
 
-              // Fetch constraint data from server
-              const response = await fetch(`${apiBaseUrl}/api/constraintData`);
-              if (!response.ok) {
-                throw new Error(`Failed to fetch constraint data: ${response.status}`);
+              // Get constraint data either from server or build locally
+              let constraintData;
+              try {
+                // Try to fetch from server first
+                const response = await fetch(`${apiBaseUrl}/api/constraintData`);
+                if (!response.ok) {
+                  throw new Error(`Failed to fetch constraint data: ${response.status}`);
+                }
+                constraintData = await response.json();
+              } catch (fetchError) {
+                console.warn('Error fetching from server, building locally:', fetchError);
+                await updateProgress(10, 'Using local constraints instead...');
+
+                // If server endpoint fails, build constraints locally
+                constraintData = {
+                  // Add study area
+                  studyArea: STUDY_AREA,
+
+                  // Add coastline approximation
+                  coastline: {
+                    type: 'FeatureCollection',
+                    features: [{
+                      type: 'Feature',
+                      properties: { name: 'Western Australia Coastline', type: 'land' },
+                      geometry: {
+                        type: 'Polygon',
+                        coordinates: [[
+                          [115.75, -32.15],
+                          [115.85, -32.15],
+                          [115.85, -31.95],
+                          [115.80, -31.95],
+                          [115.78, -31.96],
+                          [115.76, -31.98],
+                          [115.75, -32.00],
+                          [115.75, -32.03],
+                          [115.74, -32.05],
+                          [115.74, -32.08],
+                          [115.75, -32.15]
+                        ]]
+                      }
+                    }]
+                  }
+                };
+
+                // Extract constraints from map layers if available
+                const constraintKeys = [
+                  'portAuthorities',
+                  'marineParks',
+                  'fishHabitat',
+                  'cockburnSound',
+                  'mooringAreas',
+                  'marineInfrastructure'
+                ];
+
+                for (const key of constraintKeys) {
+                  try {
+                    if (govLayers[key] && govLayers[key].layer) {
+                      // Extract GeoJSON from layer if it exists
+                      const layerGeoJSON = govLayers[key].layer.toGeoJSON();
+                      constraintData[key] = layerGeoJSON;
+                    } else if (cachedData[key]) {
+                      // Use cached data if available
+                      constraintData[key] = cachedData[key];
+                    } else {
+                      // Empty placeholder
+                      constraintData[key] = { type: 'FeatureCollection', features: [] };
+                    }
+                  } catch (e) {
+                    console.warn(`Failed to extract ${key}:`, e);
+                    constraintData[key] = { type: 'FeatureCollection', features: [] };
+                  }
+                }
               }
 
-              const constraintData = await response.json();
               await updateProgress(20, 'Processing constraints...');
 
               // Process the study area
               const studyArea = constraintData.studyArea;
               if (!studyArea) {
-                throw new Error('Study area not provided in constraint data');
+                throw new Error('Study area not available');
               }
 
               // Process the coastline to create a water mask
@@ -2358,9 +2425,8 @@
               // Get all constraints collections in one array
               const constraints = Object.keys(constraintData)
                 .filter(key => key !== 'studyArea' && key !== 'coastline')
-                .map(key => constraintData[key].features)
-                .flat()
-                .filter(feature => feature.geometry); // Make sure we have valid geometries
+                .flatMap(key => constraintData[key].features || [])
+                .filter(feature => feature && feature.geometry); // Make sure we have valid geometries
 
               await updateProgress(40, 'Creating grid points...');
 
@@ -2511,6 +2577,7 @@
               throw error;
             }
           }
+
           function updateRecommendedZonesLayer(geojson) {
             try {
               if (govLayers.recommendedZones.layer) {
@@ -2600,109 +2667,109 @@
               updateLayerLoadingState('recommendedZones', false);
               return Promise.resolve();
             }
-          
 
-          // Try to fetch from server
-          try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-            const response = await fetch(`${apiBaseUrl}/api/recommendedZones`, {
-              signal: controller.signal
-            });
-
-            clearTimeout(timeoutId);
-
-            if (response.status === 202) {
-              // Calculation in progress - set up polling
-              const data = await response.json();
-              console.log('Zone calculation in progress:', data);
-
-              // Show the calculation status and progress
-              const progressDisplay = document.getElementById('calculationProgress');
-              const timeDisplay = document.getElementById('calculationTime');
-
-              if (progressDisplay) {
-                progressDisplay.textContent = `${Math.max(1, data.progress || 0)}%`;
-              }
-
-              if (timeDisplay) {
-                timeDisplay.textContent = `Started: ${new Date(data.started).toLocaleTimeString()}`;
-              }
-
-              // Set up polling to check status
-              setupZoneCalculationPolling(data);
-
-              return Promise.resolve();
-            } else if (response.ok) {
-              // Calculation complete - use the data
-              const data = await response.json();
-
-              // Cache the results
-              cachedData.recommendedZones = data;
-              saveToLocalStorage('recommendedZones', data);
-
-              // Update the map
-              updateRecommendedZonesLayer(data);
-
-              // Hide calculation status
-              if (calculationStatus) calculationStatus.style.display = 'none';
-
-              return Promise.resolve();
-            } else {
-              throw new Error(`Server returned status ${response.status}`);
-            }
-          } catch (error) {
-            console.error('Error fetching recommended zones:', error);
-
-            // Check calculation status to see if it's still running
+            // Try to fetch from server
             try {
-              const statusResponse = await fetch(`${apiBaseUrl}/api/zoneCalculationStatus`);
-              if (statusResponse.ok) {
-                const statusData = await statusResponse.json();
-                if (statusData.inProgress) {
-                  // Set up polling to check status
-                  setupZoneCalculationPolling(statusData);
-                } else {
-                  // Show error message
-                  if (calculationStatus) {
-                    calculationStatus.innerHTML = `
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+              const response = await fetch(`${apiBaseUrl}/api/recommendedZones`, {
+                signal: controller.signal
+              });
+
+              clearTimeout(timeoutId);
+
+              if (response.status === 202) {
+                // Calculation in progress - set up polling
+                const data = await response.json();
+                console.log('Zone calculation in progress:', data);
+
+                // Show the calculation status and progress
+                const progressDisplay = document.getElementById('calculationProgress');
+                const timeDisplay = document.getElementById('calculationTime');
+
+                if (progressDisplay) {
+                  progressDisplay.textContent = `${Math.max(1, data.progress || 0)}%`;
+                }
+
+                if (timeDisplay) {
+                  timeDisplay.textContent = `Started: ${new Date(data.started).toLocaleTimeString()}`;
+                }
+
+                // Set up polling to check status
+                setupZoneCalculationPolling(data);
+
+                return Promise.resolve();
+              } else if (response.ok) {
+                // Calculation complete - use the data
+                const data = await response.json();
+
+                // Cache the results
+                cachedData.recommendedZones = data;
+                saveToLocalStorage('recommendedZones', data);
+
+                // Update the map
+                updateRecommendedZonesLayer(data);
+
+                // Hide calculation status
+                if (calculationStatus) calculationStatus.style.display = 'none';
+
+                return Promise.resolve();
+              } else {
+                throw new Error(`Server returned status ${response.status}`);
+              }
+            } catch (error) {
+              console.error('Error fetching recommended zones:', error);
+
+              // Check calculation status to see if it's still running
+              try {
+                const statusResponse = await fetch(`${apiBaseUrl}/api/zoneCalculationStatus`);
+                if (statusResponse.ok) {
+                  const statusData = await statusResponse.json();
+                  if (statusData.inProgress) {
+                    // Set up polling to check status
+                    setupZoneCalculationPolling(statusData);
+                  } else {
+                    // Show error message
+                    if (calculationStatus) {
+                      calculationStatus.innerHTML = `
               <div style="color: #e53935; margin-top: 10px;">
                 Failed to load zones: ${error.message || 'Unknown error'}
                 <button id="retryZoneCalculation" class="retry-button">Retry</button>
               </div>
             `;
 
-                    // Add retry button event listener
-                    document.getElementById('retryZoneCalculation')?.addEventListener('click', () => {
-                      calculationStatus.style.display = 'none';
-                      loadRecommendedZones();
-                    });
+                      // Add retry button event listener
+                      document.getElementById('retryZoneCalculation')?.addEventListener('click', () => {
+                        calculationStatus.style.display = 'none';
+                        loadRecommendedZones();
+                      });
+                    }
                   }
                 }
-              }
-            } catch (e) {
-              console.warn('Failed to check calculation status:', e);
-              // Show generic error
-              if (calculationStatus) {
-                calculationStatus.innerHTML = `
+              } catch (e) {
+                console.warn('Failed to check calculation status:', e);
+                // Show generic error
+                if (calculationStatus) {
+                  calculationStatus.innerHTML = `
           <div style="color: #e53935; margin-top: 10px;">
             Failed to load zones. 
             <button id="retryZoneCalculation" class="retry-button">Retry</button>
           </div>
         `;
 
-                // Add retry button event listener
-                document.getElementById('retryZoneCalculation')?.addEventListener('click', () => {
-                  calculationStatus.style.display = 'none';
-                  loadRecommendedZones();
-                });
+                  // Add retry button event listener
+                  document.getElementById('retryZoneCalculation')?.addEventListener('click', () => {
+                    calculationStatus.style.display = 'none';
+                    loadRecommendedZones();
+                  });
+                }
               }
-            }
 
-            updateLayerLoadingState('recommendedZones', false);
-            return Promise.resolve();
-          }
+              updateLayerLoadingState('recommendedZones', false);
+              return Promise.resolve();
+            }
           }
 
           // Create navigation aids layer

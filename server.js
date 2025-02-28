@@ -937,7 +937,7 @@ app.get('/api/recommendedZones', async (req, res) => {
   }
 });
 
-// Add this new endpoint to get constraint data for client-side calculation
+// Add this endpoint to the server.js file
 app.get('/api/constraintData', async (req, res) => {
   try {
     // Check cache first
@@ -951,9 +951,9 @@ app.get('/api/constraintData', async (req, res) => {
     }
     
     // Prepare a simplified version of all constraints for client
-    const explorer = new APIExplorer({
-      delayBetweenRequests: 500,
-      maxRetries: 2,
+    const explorer = new APIExplorer({ 
+      delayBetweenRequests: 500, 
+      maxRetries: 2, 
       timeout: 15000,
       useFallback: true
     });
@@ -1048,6 +1048,7 @@ app.get('/api/constraintData', async (req, res) => {
     res.status(500).json({ error: 'Error fetching constraint data', message: error.message });
   }
 });
+
 // Update the performZoneCalculation function with more frequent progress updates
 // OPTIMIZE: Improved performZoneCalculation function for low-CPU environments
 async function performZoneCalculation(cacheKey) {
