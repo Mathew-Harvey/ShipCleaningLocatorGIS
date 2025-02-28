@@ -2282,301 +2282,434 @@
           }
 
           async function calculateRecommendedZonesClientSide() {
-            try {
-              const calculationStatus = document.getElementById('zoneCalculationStatus');
-              const progressDisplay = document.getElementById('calculationProgress');
-              const timeDisplay = document.getElementById('calculationTime');
+  try {
+    const calculationStatus = document.getElementById('zoneCalculationStatus');
+    const progressDisplay = document.getElementById('calculationProgress');
+    const timeDisplay = document.getElementById('calculationTime');
 
-              if (calculationStatus) {
-                calculationStatus.style.display = 'block';
-                calculationStatus.innerHTML = `
+    if (calculationStatus) {
+      calculationStatus.style.display = 'block';
+      calculationStatus.innerHTML = `
         <div>Calculating recommended zones: <span id="calculationProgress" class="calculation-progress">5%</span></div>
         <div id="calculationTime" class="calculation-time">Loading constraints...</div>
         <div id="zoneProgressBar" style="width: 100%; background-color: #f3f3f3; height: 8px; margin-top: 5px; border-radius: 4px; overflow: hidden;">
           <div id="zoneProgressFill" style="height: 100%; width: 5%; background-color: #673AB7; border-radius: 4px; transition: width 0.5s ease;"></div>
         </div>
       `;
-              }
+    }
 
-              // Define progress update function
-              function updateProgress(percent, message) {
-                const progress = Math.min(99, Math.max(5, Math.floor(percent)));
-                if (progressDisplay) progressDisplay.textContent = `${progress}%`;
+    // Define progress update function
+    function updateProgress(percent, message) {
+      const progress = Math.min(99, Math.max(5, Math.floor(percent)));
+      if (progressDisplay) progressDisplay.textContent = `${progress}%`;
 
-                const progressFill = document.getElementById('zoneProgressFill');
-                if (progressFill) progressFill.style.width = `${progress}%`;
+      const progressFill = document.getElementById('zoneProgressFill');
+      if (progressFill) progressFill.style.width = `${progress}%`;
 
-                if (timeDisplay && message) timeDisplay.textContent = message;
+      if (timeDisplay && message) timeDisplay.textContent = message;
 
-                // Allow UI to update by yielding to the event loop
-                return new Promise(resolve => setTimeout(resolve, 0));
-              }
+      // Allow UI to update by yielding to the event loop
+      return new Promise(resolve => setTimeout(resolve, 0));
+    }
 
-              const startTime = Date.now();
-              await updateProgress(5, 'Fetching constraint data...');
+    const startTime = Date.now();
+    await updateProgress(5, 'Fetching constraint data...');
 
-              // Get constraint data either from server or build locally
-              let constraintData;
-              try {
-                // Try to fetch from server first
-                const response = await fetch(`${apiBaseUrl}/api/constraintData`);
-                if (!response.ok) {
-                  throw new Error(`Failed to fetch constraint data: ${response.status}`);
-                }
-                constraintData = await response.json();
-              } catch (fetchError) {
-                console.warn('Error fetching from server, building locally:', fetchError);
-                await updateProgress(10, 'Using local constraints instead...');
+    // Get constraint data either from server or build locally
+    let constraintData;
+    try {
+      // Try to fetch from server first
+      const response = await fetch(`${apiBaseUrl}/api/constraintData`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch constraint data: ${response.status}`);
+      }
+      constraintData = await response.json();
+    } catch (fetchError) {
+      console.warn('Error fetching from server, building locally:', fetchError);
+      await updateProgress(10, 'Using local constraints instead...');
 
-                // If server endpoint fails, build constraints locally
-                constraintData = {
-                  // Add study area
-                  studyArea: STUDY_AREA,
+      // If server endpoint fails, build constraints locally
+      constraintData = {
+        // Add study area
+        studyArea: STUDY_AREA,
 
-                  // Add coastline approximation
-                  coastline: {
-                    type: 'FeatureCollection',
-                    features: [{
-                      type: 'Feature',
-                      properties: { name: 'Western Australia Coastline', type: 'land' },
-                      geometry: {
-                        type: 'Polygon',
-                        coordinates: [[
-                          [115.75, -32.15],
-                          [115.85, -32.15],
-                          [115.85, -31.95],
-                          [115.80, -31.95],
-                          [115.78, -31.96],
-                          [115.76, -31.98],
-                          [115.75, -32.00],
-                          [115.75, -32.03],
-                          [115.74, -32.05],
-                          [115.74, -32.08],
-                          [115.75, -32.15]
-                        ]]
-                      }
-                    }]
-                  }
-                };
+        // CRITICAL FIX: Use a more accurate coastline
+        coastline: {
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            properties: { name: 'Western Australia Coastline', type: 'land' },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[
+                // Much more detailed coastline around Fremantle and City Beach area
+                [115.750, -32.150],  // South point
+                [115.850, -32.150],  // Southeast corner
+                [115.850, -31.950],  // Northeast corner
+                [115.800, -31.950],  // North point
+                // City Beach area - refined to prevent water zones over land
+                [115.780, -31.960],
+                [115.765, -31.965],
+                [115.760, -31.970],
+                [115.758, -31.980],
+                [115.757, -31.985],
+                [115.755, -31.990],
+                [115.753, -31.995],
+                [115.752, -32.000],
+                [115.750, -32.005],
+                [115.748, -32.010],
+                [115.747, -32.015],
+                [115.745, -32.020],
+                [115.743, -32.025],
+                [115.742, -32.030],
+                [115.741, -32.035],
+                [115.740, -32.040],
+                [115.739, -32.045],
+                [115.738, -32.050],
+                [115.737, -32.055],
+                [115.737, -32.060],
+                [115.738, -32.065],
+                [115.739, -32.070],
+                [115.740, -32.075],
+                [115.742, -32.080],
+                [115.743, -32.085],
+                [115.745, -32.090],
+                [115.747, -32.095],
+                [115.748, -32.100],
+                [115.749, -32.105],
+                [115.750, -32.110],
+                [115.751, -32.120],
+                [115.750, -32.130],
+                [115.750, -32.140],
+                [115.750, -32.150]  // Back to start
+              ]]
+            }
+          }]
+        }
+      };
 
-                // Extract constraints from map layers if available
-                const constraintKeys = [
-                  'portAuthorities',
-                  'marineParks',
-                  'fishHabitat',
-                  'cockburnSound',
-                  'mooringAreas',
-                  'marineInfrastructure'
-                ];
+      // Extract constraints from map layers if available
+      const constraintKeys = [
+        'portAuthorities',
+        'marineParks',
+        'fishHabitat',
+        'cockburnSound',
+        'mooringAreas',
+        'marineInfrastructure'
+      ];
 
-                for (const key of constraintKeys) {
-                  try {
-                    if (govLayers[key] && govLayers[key].layer) {
-                      // Extract GeoJSON from layer if it exists
-                      const layerGeoJSON = govLayers[key].layer.toGeoJSON();
-                      constraintData[key] = layerGeoJSON;
-                    } else if (cachedData[key]) {
-                      // Use cached data if available
-                      constraintData[key] = cachedData[key];
-                    } else {
-                      // Empty placeholder
-                      constraintData[key] = { type: 'FeatureCollection', features: [] };
-                    }
-                  } catch (e) {
-                    console.warn(`Failed to extract ${key}:`, e);
-                    constraintData[key] = { type: 'FeatureCollection', features: [] };
-                  }
-                }
-              }
+      for (const key of constraintKeys) {
+        try {
+          if (govLayers[key] && govLayers[key].layer) {
+            // Extract GeoJSON from layer if it exists
+            const layerGeoJSON = govLayers[key].layer.toGeoJSON();
+            constraintData[key] = layerGeoJSON;
+          } else if (cachedData[key]) {
+            // Use cached data if available
+            constraintData[key] = cachedData[key];
+          } else {
+            // Empty placeholder
+            constraintData[key] = { type: 'FeatureCollection', features: [] };
+          }
+        } catch (e) {
+          console.warn(`Failed to extract ${key}:`, e);
+          constraintData[key] = { type: 'FeatureCollection', features: [] };
+        }
+      }
+    }
 
-              await updateProgress(20, 'Processing constraints...');
+    await updateProgress(20, 'Processing constraints...');
 
-              // Process the study area
-              const studyArea = constraintData.studyArea;
-              if (!studyArea) {
-                throw new Error('Study area not available');
-              }
+    // Process the study area
+    const studyArea = constraintData.studyArea;
+    if (!studyArea) {
+      throw new Error('Study area not available');
+    }
 
-              // Process the coastline to create a water mask
-              let waterMask = null;
-              try {
-                if (constraintData.coastline && constraintData.coastline.features.length > 0) {
-                  await updateProgress(25, 'Creating water mask...');
+    // CRITICAL FIX: Create a proper water mask
+    let waterMask = null;
+    try {
+      if (constraintData.coastline && constraintData.coastline.features.length > 0) {
+        await updateProgress(25, 'Creating water mask...');
 
-                  // Use the first coastline feature
-                  const coastline = constraintData.coastline.features[0];
+        try {
+          // Get the coastline features
+          const coastlineFeatures = constraintData.coastline.features;
+          
+          // Create a union of all coastline features if multiple exist
+          let combinedCoastline = coastlineFeatures[0];
+          for (let i = 1; i < coastlineFeatures.length; i++) {
+            try {
+              combinedCoastline = turf.union(combinedCoastline, coastlineFeatures[i]);
+            } catch (e) {
+              console.warn('Error combining coastline features:', e);
+            }
+          }
+          
+          // Create a water mask by taking the difference between study area and land
+          waterMask = turf.difference(studyArea, combinedCoastline);
+        } catch (e) {
+          console.error('Error creating precise water mask:', e);
+          throw e;
+        }
+      } else {
+        throw new Error('No coastline data available');
+      }
+    } catch (error) {
+      console.error('Failed to create water mask:', error);
+      // CRITICAL FIX: Create a fallback water mask with explicit exclusion of the problematic area
+      waterMask = {
+        type: 'Feature',
+        properties: { name: 'Fallback Water Mask' },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[
+            [115.650, -32.150],  // Southwest corner
+            [115.850, -32.150],  // Southeast corner
+            [115.850, -31.950],  // Northeast corner
+            [115.650, -31.950],  // Northwest corner
+            [115.650, -32.150]   // Back to start
+          ], [
+            // Inner ring for land (City Beach and coastline)
+            [115.750, -32.150],  // South point
+            [115.750, -32.140],
+            [115.751, -32.130],
+            [115.751, -32.120],
+            [115.750, -32.110],
+            [115.749, -32.105],
+            [115.748, -32.100],
+            [115.747, -32.095],
+            [115.745, -32.090],
+            [115.743, -32.085],
+            [115.742, -32.080],
+            [115.740, -32.075],
+            [115.739, -32.070],
+            [115.738, -32.065],
+            [115.737, -32.060],
+            [115.737, -32.055],
+            [115.738, -32.050],
+            [115.739, -32.045],
+            [115.740, -32.040],
+            [115.741, -32.035],
+            [115.742, -32.030],
+            [115.743, -32.025],
+            [115.745, -32.020],
+            [115.747, -32.015],
+            [115.748, -32.010],
+            [115.750, -32.005],
+            [115.752, -32.000],
+            [115.753, -31.995],
+            [115.755, -31.990],
+            [115.757, -31.985],
+            [115.758, -31.980],
+            [115.760, -31.970],
+            [115.765, -31.965],
+            [115.780, -31.960],
+            [115.800, -31.950],
+            [115.850, -31.950],
+            [115.850, -32.150],
+            [115.750, -32.150]
+          ]]
+        }
+      };
+    }
 
-                  // Create a water mask by taking the difference between study area and land
-                  waterMask = turf.difference(studyArea, coastline);
-                }
-              } catch (error) {
-                console.warn('Failed to create water mask:', error);
-                // Continue without water mask, just use study area
-                waterMask = studyArea;
-              }
+    // CRITICAL FIX: Ensure we have a valid water mask
+    if (!waterMask || !waterMask.geometry) {
+      throw new Error('No valid water mask available - cannot calculate safe zones');
+    }
 
-              await updateProgress(30, 'Combining constraints...');
+    await updateProgress(30, 'Combining constraints...');
 
-              // Create a grid-based approach for better browser performance
-              const bbox = turf.bbox(studyArea);
-              const cellSize = 0.01; // ~1km cells
-              const grid = [];
+    // Get all constraints collections in one array
+    const constraints = Object.keys(constraintData)
+      .filter(key => key !== 'studyArea' && key !== 'coastline')
+      .flatMap(key => constraintData[key].features || [])
+      .filter(feature => feature && feature.geometry); // Make sure we have valid geometries
 
-              // Get all constraints collections in one array
-              const constraints = Object.keys(constraintData)
-                .filter(key => key !== 'studyArea' && key !== 'coastline')
-                .flatMap(key => constraintData[key].features || [])
-                .filter(feature => feature && feature.geometry); // Make sure we have valid geometries
+    await updateProgress(40, 'Creating grid points...');
 
-              await updateProgress(40, 'Creating grid points...');
+    // Generate grid points with batched processing to keep UI responsive
+    let totalPoints = 0;
+    let validPoints = 0;
 
-              // Generate grid points with batched processing to keep UI responsive
-              let totalPoints = 0;
-              let validPoints = 0;
+    // Calculate total points for progress tracking
+    const bbox = turf.bbox(studyArea);
+    const totalRows = Math.ceil((bbox[3] - bbox[1]) / 0.01);
+    const totalCols = Math.ceil((bbox[2] - bbox[0]) / 0.01);
+    const estimatedTotalPoints = totalRows * totalCols;
 
-              // Calculate total points for progress tracking
-              const totalRows = Math.ceil((bbox[3] - bbox[1]) / cellSize);
-              const totalCols = Math.ceil((bbox[2] - bbox[0]) / cellSize);
-              const estimatedTotalPoints = totalRows * totalCols;
+    // Create a grid of points
+    const grid = [];
+    const cellSize = 0.01; // ~1km cells
 
-              // Process grid in rows to avoid UI blocking
-              for (let y = bbox[1]; y <= bbox[3]; y += cellSize) {
-                const rowPoints = [];
+    // Process grid in rows to avoid UI blocking
+    for (let y = bbox[1]; y <= bbox[3]; y += cellSize) {
+      const rowPoints = [];
 
-                for (let x = bbox[0]; x <= bbox[2]; x += cellSize) {
-                  totalPoints++;
+      for (let x = bbox[0]; x <= bbox[2]; x += cellSize) {
+        totalPoints++;
 
-                  // Create a point
-                  const pt = turf.point([x, y]);
+        // Create a point
+        const pt = turf.point([x, y]);
 
-                  // Check if point is in water (if we have a water mask)
-                  const isInWater = !waterMask || turf.booleanPointInPolygon(pt, waterMask);
+        // CRITICAL FIX: Check if point is in water - only use points that are definitely in water
+        // Change from: const isInWater = !waterMask || turf.booleanPointInPolygon(pt, waterMask);
+        // To: Actually require the point to be in water
+        const isInWater = waterMask && turf.booleanPointInPolygon(pt, waterMask);
 
-                  // Skip if not in water
-                  if (!isInWater) continue;
+        // Skip if not in water
+        if (!isInWater) continue;
 
-                  // Check if point is in any constraint
-                  const isInConstraint = constraints.some(feature => {
-                    try {
-                      return turf.booleanPointInPolygon(pt, feature);
-                    } catch (e) {
-                      return false; // If check fails, assume not in constraint
-                    }
-                  });
+        // Check if point is in any constraint
+        const isInConstraint = constraints.some(feature => {
+          try {
+            return turf.booleanPointInPolygon(pt, feature);
+          } catch (e) {
+            // If check fails, assume it is in a constraint to be conservative
+            return true;
+          }
+        });
 
-                  // If not in any constraint, add to our grid of valid points
-                  if (!isInConstraint) {
-                    rowPoints.push(pt);
-                    validPoints++;
-                  }
-                }
+        // If not in any constraint, add to our grid of valid points
+        if (!isInConstraint) {
+          rowPoints.push(pt);
+          validPoints++;
+        }
+      }
 
-                if (rowPoints.length > 0) {
-                  grid.push(...rowPoints);
-                }
+      if (rowPoints.length > 0) {
+        grid.push(...rowPoints);
+      }
 
-                // Update progress periodically based on how many points we've processed
-                const gridProgress = (totalPoints / estimatedTotalPoints) * 30;
-                await updateProgress(40 + gridProgress, `Found ${validPoints} valid points...`);
-              }
+      // Update progress periodically based on how many points we've processed
+      const gridProgress = (totalPoints / estimatedTotalPoints) * 30;
+      await updateProgress(40 + gridProgress, `Found ${validPoints} valid points...`);
+    }
 
-              await updateProgress(70, `Creating polygons from ${grid.length} points...`);
+    await updateProgress(70, `Creating polygons from ${grid.length} points...`);
 
-              // Create buffer around points and merge them into polygons
-              let potentialZones = null;
+    // Create buffer around points and merge them into polygons
+    let potentialZones = null;
 
-              if (grid.length > 0) {
-                try {
-                  // Buffer the first point to start
-                  potentialZones = turf.buffer(grid[0], 0.008, { units: 'degrees' });
+    if (grid.length > 0) {
+      try {
+        // Buffer the first point to start
+        potentialZones = turf.buffer(grid[0], 0.008, { units: 'degrees' });
 
-                  // Process in small batches to keep UI responsive
-                  const batchSize = 10;
-                  for (let i = 1; i < grid.length; i += batchSize) {
-                    const batch = grid.slice(i, i + batchSize);
+        // Process in small batches to keep UI responsive
+        const batchSize = 10;
+        for (let i = 1; i < grid.length; i += batchSize) {
+          const batch = grid.slice(i, i + batchSize);
 
-                    // Buffer each point in the batch
-                    const bufferedPoints = batch.map(pt => turf.buffer(pt, 0.008, { units: 'degrees' }));
+          // Buffer each point in the batch
+          const bufferedPoints = batch.map(pt => turf.buffer(pt, 0.008, { units: 'degrees' }));
 
-                    // Union each buffer with the accumulated result
-                    for (const buffer of bufferedPoints) {
-                      try {
-                        potentialZones = turf.union(potentialZones, buffer);
-                      } catch (e) {
-                        console.warn('Error merging buffers:', e);
-                        // Continue with next buffer
-                      }
-                    }
+          // Union each buffer with the accumulated result
+          for (const buffer of bufferedPoints) {
+            try {
+              potentialZones = turf.union(potentialZones, buffer);
+            } catch (e) {
+              console.warn('Error merging buffers:', e);
+              // Continue with next buffer
+            }
+          }
 
-                    // Update progress
-                    const unionProgress = Math.min(25, (i / grid.length) * 25);
-                    await updateProgress(70 + unionProgress, `Processing buffers: ${i}/${grid.length}`);
-                  }
-                } catch (error) {
-                  console.error('Error creating buffers:', error);
-                  // Fall back to using the water mask or study area
-                  potentialZones = waterMask || studyArea;
-                }
-              } else {
-                console.warn('No valid grid points found, using water mask');
-                // If no valid points, use the water mask
-                potentialZones = waterMask || studyArea;
-              }
+          // Update progress
+          const unionProgress = Math.min(25, (i / grid.length) * 25);
+          await updateProgress(70 + unionProgress, `Processing buffers: ${i}/${grid.length}`);
+        }
+      } catch (error) {
+        console.error('Error creating buffers:', error);
+        // Fall back to using the water mask or study area
+        potentialZones = waterMask || studyArea;
+      }
+    } else {
+      console.warn('No valid grid points found, using water mask');
+      // If no valid points, use the water mask
+      potentialZones = waterMask || studyArea;
+    }
 
-              await updateProgress(95, 'Finalizing zone boundaries...');
+    await updateProgress(95, 'Finalizing zone boundaries...');
 
-              // Create final GeoJSON result
-              const result = {
-                type: 'FeatureCollection',
-                features: [{
-                  type: 'Feature',
-                  properties: {
-                    type: 'Potential Cleaning Zone',
-                    description: 'Areas outside all constraint zones',
-                    calculatedAt: new Date().toISOString(),
-                    calculationTime: `${Math.floor((Date.now() - startTime) / 1000)} seconds`,
-                    calculatedBy: 'Client-side calculation'
-                  },
-                  geometry: potentialZones.geometry
-                }]
-              };
+    // CRITICAL FIX: Always apply the water mask as a final step
+    try {
+      console.log('Applying final water mask to ensure zones are only in water');
+      const maskedZones = turf.intersect(potentialZones, waterMask);
+      
+      // Only use the result if it's valid
+      if (maskedZones && maskedZones.geometry) {
+        potentialZones = maskedZones;
+      } else {
+        console.error('Water mask intersection failed - trying alternative approach');
+        // Try clipping by the water mask's bounding box as a fallback
+        const waterBbox = turf.bbox(waterMask);
+        potentialZones = turf.bboxClip(potentialZones, waterBbox);
+        
+        // Verify result is still in water
+        const centroid = turf.centroid(potentialZones);
+        if (!turf.booleanPointInPolygon(centroid, waterMask)) {
+          throw new Error('Result fails water validation');
+        }
+      }
+    } catch (e) {
+      console.error('Error in final water masking:', e);
+      throw new Error('Failed to restrict zones to water areas');
+    }
 
-              // Cache locally
-              cachedData.recommendedZones = result;
-              saveToLocalStorage('recommendedZones', result);
+    // Create final GeoJSON result
+    const result = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        properties: {
+          type: 'Potential Cleaning Zone',
+          description: 'Areas outside all constraint zones',
+          calculatedAt: new Date().toISOString(),
+          calculationTime: `${Math.floor((Date.now() - startTime) / 1000)} seconds`,
+          calculatedBy: 'Client-side calculation'
+        },
+        geometry: potentialZones.geometry
+      }]
+    };
 
-              // Update progress and show final result
-              await updateProgress(100, `Calculation completed in ${Math.floor((Date.now() - startTime) / 1000)} seconds`);
+    // Cache locally
+    cachedData.recommendedZones = result;
+    saveToLocalStorage('recommendedZones', result);
 
-              // Display after a short delay to show 100%
-              setTimeout(() => {
-                if (calculationStatus) calculationStatus.style.display = 'none';
-                updateRecommendedZonesLayer(result);
-                showSuccessMessage('Recommended zones calculated successfully!');
-              }, 1000);
+    // Update progress and show final result
+    await updateProgress(100, `Calculation completed in ${Math.floor((Date.now() - startTime) / 1000)} seconds`);
 
-              return result;
-            } catch (error) {
-              console.error('Client-side zone calculation failed:', error);
+    // Display after a short delay to show 100%
+    setTimeout(() => {
+      if (calculationStatus) calculationStatus.style.display = 'none';
+      updateRecommendedZonesLayer(result);
+      showSuccessMessage('Recommended zones calculated successfully!');
+    }, 1000);
 
-              const calculationStatus = document.getElementById('zoneCalculationStatus');
-              if (calculationStatus) {
-                calculationStatus.innerHTML = `
+    return result;
+  } catch (error) {
+    console.error('Client-side zone calculation failed:', error);
+
+    const calculationStatus = document.getElementById('zoneCalculationStatus');
+    if (calculationStatus) {
+      calculationStatus.innerHTML = `
         <div style="color: #e53935; margin-top: 10px;">
           Error calculating zones: ${error.message}
           <button id="retryZoneCalculation" class="retry-button">Retry</button>
         </div>
       `;
 
-                document.getElementById('retryZoneCalculation')?.addEventListener('click', () => {
-                  calculationStatus.style.display = 'none';
-                  loadRecommendedZones();
-                });
-              }
+      // Add retry button event listener
+      document.getElementById('retryZoneCalculation')?.addEventListener('click', () => {
+        calculationStatus.style.display = 'none';
+        loadRecommendedZones();
+      });
+    }
 
-              throw error;
-            }
-          }
+    throw error;
+  }
+}
 
           function updateRecommendedZonesLayer(geojson) {
             try {

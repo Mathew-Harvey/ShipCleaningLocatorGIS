@@ -1049,8 +1049,6 @@ app.get('/api/constraintData', async (req, res) => {
   }
 });
 
-// Update the performZoneCalculation function with more frequent progress updates
-// OPTIMIZE: Improved performZoneCalculation function for low-CPU environments
 async function performZoneCalculation(cacheKey) {
   console.log('Starting calculation of potential cleaning zones...');
   try {
@@ -1179,65 +1177,201 @@ async function performZoneCalculation(cacheKey) {
     updateProgress(50);
     console.log(`Simplified to ${simplifiedConstraints.features.length} constraint features`);
 
-    // OPTIMIZE: Use a simplified study area with a water mask
-    // Load the coastline data to make sure we're not including land
+    // CRITICAL FIX: Create a detailed coastline and water mask
+    let coastlineData = null;
     let waterMask = null;
+    
     try {
-      // First check if we have cached water mask
-      const cachedWaterMask = dataCache.get('waterMask'); // Fix: Use dataCache instead of cachedData
-      if (cachedWaterMask) {
-        waterMask = cachedWaterMask;
-      } else {
-        // Try to load a simplified coastline
-        const coastlineResponse = await fetch(`${apiBaseUrl}/api/coastline`);
-        if (coastlineResponse.ok) {
-          const coastlineData = await coastlineResponse.json();
-          // The water mask is the study area minus the land areas
-          if (coastlineData && coastlineData.features && coastlineData.features.length > 0) {
-            waterMask = turf.difference(
-              simplifyFeature(STUDY_AREA, 0.02),
-              turf.union(...coastlineData.features)
-            );
-            // Cache the water mask
+      // Get coastline data - this is critical for correct results
+      const coastlineResponse = await fetch(`${apiBaseUrl}/api/coastline`);
+      if (coastlineResponse.ok) {
+        coastlineData = await coastlineResponse.json();
+      }
+      
+      // If we couldn't get coastline from the API, use an enhanced fallback
+      if (!coastlineData || !coastlineData.features || coastlineData.features.length === 0) {
+        console.log('Using enhanced coastline fallback data');
+        coastlineData = {
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            properties: { name: 'Western Australia Coastline', type: 'land' },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[
+                // Much more detailed coastline around Fremantle and City Beach area
+                [115.750, -32.150],  // South point
+                [115.850, -32.150],  // Southeast corner
+                [115.850, -31.950],  // Northeast corner
+                [115.800, -31.950],  // North point
+                // City Beach area - detailed to prevent water zones over land
+                [115.780, -31.960],
+                [115.765, -31.965],
+                [115.760, -31.970],
+                [115.758, -31.980],
+                [115.757, -31.985],
+                [115.755, -31.990],
+                [115.753, -31.995],
+                [115.752, -32.000],
+                [115.750, -32.005],
+                [115.748, -32.010],
+                [115.747, -32.015],
+                [115.745, -32.020],
+                [115.743, -32.025],
+                [115.742, -32.030],
+                [115.741, -32.035],
+                [115.740, -32.040],
+                [115.739, -32.045],
+                [115.738, -32.050],
+                [115.737, -32.055],
+                [115.737, -32.060],
+                [115.738, -32.065],
+                [115.739, -32.070],
+                [115.740, -32.075],
+                [115.742, -32.080],
+                [115.743, -32.085],
+                [115.745, -32.090],
+                [115.747, -32.095],
+                [115.748, -32.100],
+                [115.749, -32.105],
+                [115.750, -32.110],
+                [115.751, -32.120],
+                [115.750, -32.130],
+                [115.750, -32.140],
+                [115.750, -32.150]  // Back to start
+              ]]
+            }
+          }]
+        };
+      }
+      
+      // Create water mask - this is the key step to avoid cleaning zones on land
+      if (coastlineData && coastlineData.features && coastlineData.features.length > 0) {
+        console.log('Creating water mask from coastline data');
+        try {
+          // Get study area
+          const studyArea = simplifyFeature(STUDY_AREA, 0.01);
+          
+          // Create a union of all land features
+          let landUnion = coastlineData.features[0];
+          for (let i = 1; i < coastlineData.features.length; i++) {
+            try {
+              landUnion = turf.union(landUnion, coastlineData.features[i]);
+            } catch (e) {
+              console.warn('Error unioning land features:', e);
+            }
+          }
+          
+          // Create water mask by subtracting land from study area
+          waterMask = turf.difference(studyArea, landUnion);
+          
+          // Cache the water mask
+          if (waterMask) {
             dataCache.set('waterMask', waterMask, 86400);
           }
+        } catch (e) {
+          console.error('Failed to create water mask from coastline:', e);
         }
       }
     } catch (error) {
-      console.warn('Failed to create water mask:', error);
-      // Continue without water mask
+      console.error('Failed to create water mask:', error);
     }
-
-    // Set a basic study area as fallback
-    let potentialZones = simplifyFeature(STUDY_AREA, 0.02);
-
-    // Calculate recommended zones using a more efficient approach
+    
+    // CRITICAL: If we still don't have a water mask, create a fallback
+    if (!waterMask) {
+      console.warn('Using fallback water mask');
+      waterMask = {
+        type: 'Feature',
+        properties: { type: 'Water Mask' },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[
+            [115.650, -32.150],  // Southwest corner
+            [115.850, -32.150],  // Southeast corner
+            [115.850, -31.950],  // Northeast corner
+            [115.650, -31.950],  // Northwest corner
+            [115.650, -32.150],  // Back to start
+          ], [
+            // Inner ring for land (City Beach and coastline)
+            [115.750, -32.150],  // South point
+            [115.750, -32.140],
+            [115.751, -32.130],
+            [115.751, -32.120],
+            [115.750, -32.110],
+            [115.749, -32.105],
+            [115.748, -32.100],
+            [115.747, -32.095],
+            [115.745, -32.090],
+            [115.743, -32.085],
+            [115.742, -32.080],
+            [115.740, -32.075],
+            [115.739, -32.070],
+            [115.738, -32.065],
+            [115.737, -32.060],
+            [115.737, -32.055],
+            [115.738, -32.050],
+            [115.739, -32.045],
+            [115.740, -32.040],
+            [115.741, -32.035],
+            [115.742, -32.030],
+            [115.743, -32.025],
+            [115.745, -32.020],
+            [115.747, -32.015],
+            [115.748, -32.010],
+            [115.750, -32.005],
+            [115.752, -32.000],
+            [115.753, -31.995],
+            [115.755, -31.990],
+            [115.757, -31.985],
+            [115.758, -31.980],
+            [115.760, -31.970],
+            [115.765, -31.965],
+            [115.780, -31.960],
+            [115.800, -31.950],
+            [115.850, -31.950],
+            [115.850, -32.150],
+            [115.750, -32.150]
+          ]]
+        }
+      };
+    }
+    
     updateProgress(60);
     
-    // OPTIMIZE: Use a grid-based approach for better performance
+    // CRITICAL: Make sure we have a water mask
+    if (!waterMask) {
+      throw new Error('Unable to create water mask - cannot calculate safe zones');
+    }
+
+    // Calculate recommended zones using grid-based approach
     try {
-      console.log('Using simplified approach for better server performance');
+      console.log('Using grid-based approach for zone calculation');
       
       // Create a grid of points covering the study area
       const bbox = turf.bbox(STUDY_AREA);
       const cellSize = 0.01; // ~1km cells
       const grid = [];
       
-      // Generate grid points
+      // Generate grid points with stricter water validation
       for (let x = bbox[0]; x <= bbox[2]; x += cellSize) {
         for (let y = bbox[1]; y <= bbox[3]; y += cellSize) {
           // Create a point
           const pt = turf.point([x, y]);
           
-          // Check if point is in water (if we have a water mask)
-          const isInWater = !waterMask || turf.booleanPointInPolygon(pt, waterMask);
+          // CRITICAL FIX: Only consider points IN water - never skip this check
+          const isInWater = waterMask && turf.booleanPointInPolygon(pt, waterMask);
           
-          // Skip if not in water
+          // Skip if not in water - this is mandatory
           if (!isInWater) continue;
           
           // Check if point is in any constraint
           const isInConstraint = simplifiedConstraints.features.some(feature => {
-            return turf.booleanPointInPolygon(pt, feature);
+            try {
+              return turf.booleanPointInPolygon(pt, feature);
+            } catch (e) {
+              // If we can't determine, assume it's in a constraint to be safe
+              return true;
+            }
           });
           
           // If not in any constraint, add to our grid of valid points
@@ -1248,22 +1382,20 @@ async function performZoneCalculation(cacheKey) {
       }
       
       updateProgress(80);
+      console.log(`Found ${grid.length} valid grid points in water`);
       
       // Create buffer around points and merge them into polygons
       if (grid.length > 0) {
-        console.log(`Found ${grid.length} valid grid points, creating polygons...`);
-        
         // Buffer each point
         const bufferedPoints = grid.map(pt => turf.buffer(pt, 0.008, {units: 'degrees'}));
         
-        // Update progress
         updateProgress(90);
         
         // Merge buffered points into a MultiPolygon
-        let merged = bufferedPoints[0];
+        let potentialZones = bufferedPoints[0];
         for (let i = 1; i < Math.min(bufferedPoints.length, 50); i++) {
           try {
-            merged = turf.union(merged, bufferedPoints[i]);
+            potentialZones = turf.union(potentialZones, bufferedPoints[i]);
           } catch (e) {
             console.warn('Error merging buffers:', e);
           }
@@ -1274,54 +1406,61 @@ async function performZoneCalculation(cacheKey) {
           }
         }
         
-        potentialZones = merged;
-      } else {
-        console.warn('No valid grid points found, using study area');
-      }
-      
-      updateProgress(95);
-      
-      // Apply the water mask to ensure we're only showing water areas
-      if (waterMask) {
+        updateProgress(95);
+        
+        // CRITICAL FIX: Always apply water mask as final step
         try {
-          potentialZones = turf.intersect(potentialZones, waterMask);
+          console.log('Applying final water mask to ensure zones are only in water');
+          const maskedZones = turf.intersect(potentialZones, waterMask);
+          
+          // Only use the result if it's valid
+          if (maskedZones && maskedZones.geometry) {
+            potentialZones = maskedZones;
+          } else {
+            console.error('Water mask intersection failed - result may include land areas');
+            // Force a simple clip using bounding box of water mask
+            const waterBbox = turf.bbox(waterMask);
+            potentialZones = turf.bboxClip(potentialZones, waterBbox);
+          }
         } catch (e) {
-          console.warn('Error intersecting with water mask:', e);
+          console.error('Error applying water mask:', e);
+          throw new Error('Failed to restrict zones to water areas');
         }
+        
+        // Create result GeoJSON
+        const result = {
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            properties: { 
+              type: 'Potential Cleaning Zone',
+              description: 'Areas outside all constraint zones',
+              calculatedAt: new Date().toISOString(),
+              calculationTime: `${Math.floor((Date.now() - new Date(zoneCalculations.lastStarted).getTime()) / 1000)} seconds`
+            },
+            geometry: potentialZones.geometry
+          }]
+        };
+
+        // Cache the result for 24 hours
+        dataCache.set(cacheKey, result, 86400);
+        
+        // Mark as complete
+        zoneCalculations.progress = 100;
+        zoneCalculations.inProgress = false;
+        zoneCalculations.lastCompleted = new Date().toISOString();
+        
+        console.log('Zone calculation completed successfully');
+        return result;
+      } else {
+        throw new Error('No valid grid points found in water outside of constraints');
       }
     } catch (e) {
-      console.error('Grid-based calculation failed:', e);
-      // Fallback to study area
-      potentialZones = simplifyFeature(STUDY_AREA, 0.01);
+      console.error('Zone calculation failed:', e);
+      zoneCalculations.inProgress = false;
+      zoneCalculations.error = e.message;
+      throw e;
     }
-
-    updateProgress(98);
-
-    // Create result GeoJSON
-    const result = {
-      type: 'FeatureCollection',
-      features: [{
-        type: 'Feature',
-        properties: { 
-          type: 'Potential Cleaning Zone',
-          description: 'Areas outside all constraint zones',
-          calculatedAt: new Date().toISOString(),
-          calculationTime: `${Math.floor((Date.now() - new Date(zoneCalculations.lastStarted).getTime()) / 1000)} seconds`
-        },
-        geometry: potentialZones.geometry
-      }]
-    };
-
-    // Cache the result for 24 hours
-    dataCache.set(cacheKey, result, 86400);
-    
-    // Mark as complete
-    zoneCalculations.progress = 100;
-    zoneCalculations.inProgress = false;
-    zoneCalculations.lastCompleted = new Date().toISOString();
-    
-    console.log('Zone calculation completed successfully');
-    return result;
   } catch (error) {
     console.error('Zone calculation failed with error:', error);
     
@@ -1332,60 +1471,88 @@ async function performZoneCalculation(cacheKey) {
     throw error;
   }
 }
-
 // ADD: Create a simple API endpoint for coastline data if it doesn't exist
-app.get('/api/coastline', async (req, res) => {
-  try {
-    // Check cache first
-    const cacheKey = 'coastline';
-    const cachedCoastline = dataCache.get(cacheKey);
-    
-    if (cachedCoastline) {
-      console.log('Using cached coastline data');
-      res.set('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
-      return res.json(cachedCoastline);
-    }
 
-    // Simplified Fremantle coastline
-    const coastlineData = {
-      type: 'FeatureCollection',
-      features: [{
-        type: 'Feature',
-        properties: { 
-          name: 'Western Australia Coastline', 
-          type: 'land' 
-        },
-        geometry: {
-          type: 'Polygon',
-          coordinates: [[
-            // Approximate coastline around Fremantle
-            [115.75, -32.15],  // South
-            [115.85, -32.15],  // South-East
-            [115.85, -31.95],  // North-East
-            [115.80, -31.95],  // North
-            [115.78, -31.96],  // North Coast
-            [115.76, -31.98],  // North Coast
-            [115.75, -32.00],  // North Coast
-            [115.75, -32.03],  // Perth coastline
-            [115.74, -32.05],  // Fremantle Port
-            [115.74, -32.08],  // Fremantle South
-            [115.75, -32.15]   // Back to start
-          ]]
+
+    app.get('/api/coastline', async (req, res) => {
+      try {
+        // Check cache first
+        const cacheKey = 'coastline';
+        const cachedCoastline = dataCache.get(cacheKey);
+        
+        if (cachedCoastline) {
+          console.log('Using cached coastline data');
+          res.set('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
+          return res.json(cachedCoastline);
         }
-      }]
-    };
     
-    // Cache it
-    dataCache.set(cacheKey, coastlineData, 86400 * 7); // Cache for 7 days
-    
-    res.set('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
-    res.json(coastlineData);
-  } catch (error) {
-    console.error('Error serving coastline data:', error);
-    res.status(500).json({ error: 'Error fetching coastline data' });
-  }
-});
-
+        // Improved detailed Fremantle coastline
+        const coastlineData = {
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            properties: { 
+              name: 'Western Australia Coastline', 
+              type: 'land' 
+            },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[
+                // South point
+                [115.750, -32.150],
+                [115.850, -32.150],  // Southeast corner
+                [115.850, -31.950],  // Northeast corner
+                [115.800, -31.950],  // North point
+                // City Beach area - much more detailed to prevent water zones over land
+                [115.780, -31.960],
+                [115.765, -31.965],
+                [115.760, -31.970],
+                [115.758, -31.980],
+                [115.757, -31.985],
+                [115.755, -31.990],
+                [115.753, -31.995],
+                [115.752, -32.000],
+                [115.750, -32.005],
+                [115.748, -32.010],
+                [115.747, -32.015],
+                [115.745, -32.020],
+                [115.743, -32.025],
+                [115.742, -32.030],
+                [115.741, -32.035],
+                [115.740, -32.040],
+                [115.739, -32.045],
+                [115.738, -32.050],
+                [115.737, -32.055],
+                [115.737, -32.060],
+                [115.738, -32.065],
+                [115.739, -32.070],
+                [115.740, -32.075],
+                [115.742, -32.080],
+                [115.743, -32.085],
+                [115.745, -32.090],
+                [115.747, -32.095],
+                [115.748, -32.100],
+                [115.749, -32.105],
+                [115.750, -32.110],
+                [115.751, -32.120],
+                [115.750, -32.130],
+                [115.750, -32.140],
+                [115.750, -32.150]  // Back to start
+              ]]
+            }
+          }]
+        };
+        
+        // Cache it
+        dataCache.set(cacheKey, coastlineData, 86400 * 7); // Cache for 7 days
+        
+        res.set('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
+        res.json(coastlineData);
+      } catch (error) {
+        console.error('Error serving coastline data:', error);
+        res.status(500).json({ error: 'Error fetching coastline data' });
+      }
+    });
 // Update the API endpoints list to include the new endpoint
 app.get('/', (req, res) => {
   res.status(200).json({
