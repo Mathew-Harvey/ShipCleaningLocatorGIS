@@ -937,7 +937,117 @@ app.get('/api/recommendedZones', async (req, res) => {
   }
 });
 
-
+// Add this new endpoint to get constraint data for client-side calculation
+app.get('/api/constraintData', async (req, res) => {
+  try {
+    // Check cache first
+    const cacheKey = 'client_constraint_data';
+    const cachedData = dataCache.get(cacheKey);
+    
+    if (cachedData) {
+      console.log('Using cached constraint data for client');
+      res.set('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+      return res.json(cachedData);
+    }
+    
+    // Prepare a simplified version of all constraints for client
+    const explorer = new APIExplorer({
+      delayBetweenRequests: 500,
+      maxRetries: 2,
+      timeout: 15000,
+      useFallback: true
+    });
+    
+    // Just the essential constraints for client-side calculation
+    const constraintKeys = [
+      'portAuthorities', 
+      'marineParks', 
+      'fishHabitat', 
+      'cockburnSound', 
+      'mooringAreas', 
+      'marineInfrastructure'
+    ];
+    
+    // Fetch and simplify constraints
+    const constraintData = {};
+    
+    for (const key of constraintKeys) {
+      try {
+        const url = ENDPOINTS[key];
+        const data = await explorer.fetchGeoJSON(url, key);
+        
+        if (data && data.features && data.features.length > 0) {
+          // Only include polygon features and heavily simplify them
+          const simplifiedFeatures = data.features
+            .filter(feature => 
+              feature.geometry && 
+              (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')
+            )
+            .map(feature => {
+              try {
+                // Heavily simplify for client-side performance
+                return simplifyFeature(feature, 0.03);
+              } catch (e) {
+                // If simplification fails, try with higher tolerance
+                try {
+                  return simplifyFeature(feature, 0.05);
+                } catch (err) {
+                  // If that fails too, return the original
+                  return feature;
+                }
+              }
+            });
+          
+          constraintData[key] = {
+            type: 'FeatureCollection',
+            features: simplifiedFeatures
+          };
+        }
+      } catch (error) {
+        console.warn(`Failed to fetch ${key} for client constraints: ${error.message}`);
+        constraintData[key] = { type: 'FeatureCollection', features: [] };
+      }
+    }
+    
+    // Add simplified coastline
+    constraintData.coastline = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        properties: { name: 'Western Australia Coastline', type: 'land' },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[
+            // Approximate coastline around Fremantle
+            [115.75, -32.15],  // South
+            [115.85, -32.15],  // South-East
+            [115.85, -31.95],  // North-East
+            [115.80, -31.95],  // North
+            [115.78, -31.96],  // North Coast
+            [115.76, -31.98],  // North Coast
+            [115.75, -32.00],  // North Coast
+            [115.75, -32.03],  // Perth coastline
+            [115.74, -32.05],  // Fremantle Port
+            [115.74, -32.08],  // Fremantle South
+            [115.75, -32.15]   // Back to start
+          ]]
+        }
+      }]
+    };
+    
+    // Add study area
+    constraintData.studyArea = STUDY_AREA;
+    
+    // Cache the result
+    dataCache.set(cacheKey, constraintData, 3600); // Cache for 1 hour
+    
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.json(constraintData);
+  } catch (error) {
+    console.error('Error serving constraint data:', error);
+    res.status(500).json({ error: 'Error fetching constraint data', message: error.message });
+  }
+});
 // Update the performZoneCalculation function with more frequent progress updates
 // OPTIMIZE: Improved performZoneCalculation function for low-CPU environments
 async function performZoneCalculation(cacheKey) {
@@ -1275,7 +1385,7 @@ app.get('/api/coastline', async (req, res) => {
   }
 });
 
-// Update the API endpoints list
+// Update the API endpoints list to include the new endpoint
 app.get('/', (req, res) => {
   res.status(200).json({
     status: 'ok',
@@ -1292,6 +1402,7 @@ app.get('/', (req, res) => {
       '/api/marineGeomorphic',
       '/api/marineMultibeam',
       '/api/recommendedZones',
+      '/api/constraintData',
       '/api/nauticalReferences',
       '/api/coastline',
       '/api/analyzeProximity (POST)',
@@ -1302,7 +1413,6 @@ app.get('/', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
-
 // Provide nautical reference points
 app.get('/api/nauticalReferences', (req, res) => {
   try {
