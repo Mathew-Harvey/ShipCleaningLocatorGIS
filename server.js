@@ -6,10 +6,25 @@ const turf = require('@turf/turf');
 const NodeCache = require('node-cache');
 const compression = require('compression');
 const fs = require('fs').promises;
+const DataManager = require('./dataManager');
+const ZoneCalculator = require('./zoneCalculator');
 
 const app = express();
 const port = process.env.PORT || 3000;
 const dataCache = new NodeCache({ stdTTL: 86400 }); // Cache for 24 hours
+
+// Initialize data manager and zone calculator
+const dataManager = new DataManager({
+  dataDir: path.join(__dirname, 'gis_data'),
+  fallbackDir: path.join(__dirname, 'fallback_data'),
+  refreshInterval: 24 * 60 * 60 * 1000 // 24 hours
+});
+
+const zoneCalculator = new ZoneCalculator({
+  zonesDir: path.join(__dirname, 'calculated_zones'),
+  cacheDir: path.join(__dirname, 'zone_cache'),
+  gridResolution: 0.005
+});
 
 // Fallback data directory - create this directory and add fallback GeoJSON files
 const FALLBACK_DIR = path.join(__dirname, 'fallback_data');
@@ -19,7 +34,7 @@ app.use(compression());
 
 // Configure CORS
 app.use(cors({
-  origin: ['http://localhost:3000', 'https://cleanmyship.netlify.app', 'https://shipcleaninggis-client.netlify.app'],
+  origin: ['http://localhost:3000'],
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
@@ -253,6 +268,17 @@ async function ensureFallbackDir() {
 Object.entries(ENDPOINTS).forEach(([key, url]) => {
   app.get(`/api/${key}`, async (req, res) => {
     try {
+      // Try to get data from local storage first
+      try {
+        const localData = await dataManager.getData(key);
+        if (localData && localData.features) {
+          res.set('Cache-Control', 'public, max-age=3600');
+          return res.json(localData);
+        }
+      } catch (localError) {
+        console.log(`Local data not available for ${key}, falling back to API`);
+      }
+
       const explorer = new APIExplorer({
         delayBetweenRequests: 500,
         timeout: 60000, // Longer timeout for some of these services
@@ -847,11 +873,19 @@ function calculateEstimatedTimeRemaining(progress, startTimeStr) {
 // Calculate recommended zones by subtracting constraint areas from study area
 app.get('/api/recommendedZones', async (req, res) => {
   try {
-    // Check cache first
+    // First check if we have pre-calculated zones
+    const latestZones = await zoneCalculator.getLatestZones();
+    if (latestZones && !req.query.forceRecalculate) {
+      console.log('Using pre-calculated zones');
+      res.set('Cache-Control', 'public, max-age=3600');
+      return res.json(latestZones);
+    }
+
+    // Check cache
     const cacheKey = 'potential_cleaning_zones';
     const cachedZones = dataCache.get(cacheKey);
     
-    if (cachedZones) {
+    if (cachedZones && !req.query.forceRecalculate) {
       console.log('Using cached potential cleaning zones');
       res.set('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
       return res.json(cachedZones);
@@ -1014,54 +1048,40 @@ app.get('/api/constraintData', async (req, res) => {
 
 
 async function performZoneCalculation(cacheKey) {
-  console.log('Starting direct polygon-based cleaning zone calculation...');
+  console.log('Starting optimized zone calculation...');
   try {
-    const explorer = new APIExplorer({
-      delayBetweenRequests: 1000,
-      maxRetries: 2,
-      timeout: 20000,
-      useFallback: true
-    });
     zoneCalculations.progress = 5;
 
-    function updateProgress(value) {
-      zoneCalculations.progress = Math.min(99, Math.max(5, Math.floor(value)));
-      console.log(`Zone calculation progress: ${zoneCalculations.progress}%`);
-    }
+    // Get all constraint data
+    const constraintData = await dataManager.getAllData();
+    
+    // Add coastline and study area
+    constraintData.coastline = ENHANCED_COASTLINE;
+    constraintData.studyArea = STUDY_AREA;
+    
+    // Use the zone calculator
+    const result = await zoneCalculator.calculateRecommendedZones(constraintData, {
+      progressCallback: (progress, message) => {
+        zoneCalculations.progress = progress;
+        console.log(`Zone calculation: ${progress}% - ${message}`);
+      }
+    });
+    
+    // Cache the result
+    dataCache.set(cacheKey, result, 86400);
+    zoneCalculations.progress = 100;
+    zoneCalculations.inProgress = false;
+    zoneCalculations.lastCompleted = new Date().toISOString();
+    console.log('Zone calculation completed successfully');
+    
+    return result;
+  } catch (error) {
+    console.error('Zone calculation failed:', error);
+    zoneCalculations.inProgress = false;
+    zoneCalculations.error = error.message;
+    throw error;
+  }
 
-    // =============================================
-    // STEP 1: START WITH THE STUDY AREA
-    // =============================================
-    
-    console.log('Initializing with study area...');
-    let availableZone = turf.featureCollection([STUDY_AREA]);
-    updateProgress(10);
-    
-    // =============================================
-    // STEP 2: STRICTLY EXCLUDE ALL LAND
-    // =============================================
-    
-    console.log('Creating precise land exclusion...');
-    updateProgress(20);
-    
-    // First, create a comprehensive and precise land polygon
-    let landUnion;
-    try {
-      // Start with ENHANCED_COASTLINE
-      if (ENHANCED_COASTLINE && ENHANCED_COASTLINE.features && ENHANCED_COASTLINE.features.length > 0) {
-        landUnion = ENHANCED_COASTLINE.features[0];
-        
-        // Union all coastline features
-        for (let i = 1; i < ENHANCED_COASTLINE.features.length; i++) {
-          try {
-            landUnion = turf.union(landUnion, ENHANCED_COASTLINE.features[i]);
-          } catch (e) {
-            console.warn(`Error unioning coastline feature ${i}:`, e);
-          }
-        }
-        
-        // Add additional known land areas to ensure no gaps
-        const additionalLand = [
           // Perth Metro area - explicitly defined
           turf.polygon([[
             [115.80, -31.90], [116.00, -31.90],

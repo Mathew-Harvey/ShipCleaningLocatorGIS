@@ -1,0 +1,18 @@
+{
+  "portAuthorities": 1753708208632,
+  "portAuthorities_hash": "3ea95618805934e32b5026e18795ce26",
+  "marineParks": 1753708210624,
+  "marineParks_hash": "e6a3f9f3a54c7767001fa4a2244d7be6",
+  "fishHabitat": 1753708212208,
+  "fishHabitat_hash": "696ad1e9cef361a5607261d6ca984245",
+  "cockburnSound": 1753708213435,
+  "cockburnSound_hash": "0ce05e13c27f9ad6bfec63edd4190149",
+  "marineInfrastructure": 1753708217577,
+  "marineInfrastructure_hash": "c27f4eda9c9f0eac4e5204df4e7e4939",
+  "osmHarbours": 1753708220795,
+  "osmHarbours_hash": "53b571352148dfc56359d832c4d56ee6",
+  "osmMarinas": 1753708222664,
+  "osmMarinas_hash": "6d1a9e35f06582db446044b880485c00",
+  "mooringAreas": 1753708214631,
+  "mooringAreas_hash": "2c71b6ad8f06d1bc874ac4908b4d2f76"
+}

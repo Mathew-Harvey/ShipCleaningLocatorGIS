@@ -6,6 +6,8 @@
   <title>Hull Cleaning Constraints Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="css/modern-ui.css">
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
   <style>
     /* [CSS remains unchanged from original] */
@@ -510,8 +512,7 @@
   <div id="loadingOverlay">
     <div class="spinner"></div>
     <div id="loadingMessage" class="dot-animation">Loading marine data</div>
-    <div id="loadingSubMessage">This map is running on a free server which may take a minute to wake up if it hasn't
-      been used recently. Thank you for your patience.</div>
+    <div id="loadingSubMessage">Initializing GIS data layers...</div>
     <div id="progressBar">
       <div id="progressFill"></div>
     </div>
@@ -519,8 +520,10 @@
   <div id="errorToast"></div>
   <div id="successToast"></div>
   <div id="analysisContainer">
-    <span id="analysisClose">×</span>
-    <h3>Location Analysis</h3>
+    <div class="analysis-header">
+      <h3>Location Analysis</h3>
+      <button id="analysisClose">×</button>
+    </div>
     <div id="analysisContent"></div>
   </div>
   <div id="confirmationModal"
@@ -537,24 +540,29 @@
       </div>
     </div>
   </div>
-  <div id="map"></div>
+    <div id="map"></div>
   <div id="sidebar">
-    <h3>Hull Cleaning Constraints</h3>
-    <div class="info-text">
-      To select potential cleaning sites, ensure the location:
-      <ul>
-        <li>Is outside Fremantle Port limits</li>
-        <li>Has minimal proximity to sensitive receptors (marine parks, fish habitat, Cockburn Sound protection, etc.)
-        </li>
-        <li>Offers sufficient water flow for safe dispersion of residuals</li>
-      </ul>
-      Areas shown in the "Potential Cleaning Zones" layer represent parts of the study area that do not intersect with
-      restricted zones and are only in water areas.
-      <p><em>Click anywhere on the map to analyze a potential cleaning location.</em></p>
-      <button id="forceClearCalculation"
-        style="background-color: #F44336; color: white; padding: 8px 16px; border: none; border-radius: 4px; margin-top: 10px; cursor: pointer;">Clear
-        Cache & Recalculate</button>
+    <div class="sidebar-header">
+      <h3>Hull Cleaning Constraints</h3>
+      <button class="sidebar-toggle" id="sidebarToggle">☰</button>
     </div>
+    <div class="sidebar-content">
+      <div class="info-card">
+        To select potential cleaning sites, ensure the location:
+        <ul>
+          <li>Is outside Fremantle Port limits</li>
+          <li>Has minimal proximity to sensitive receptors (marine parks, fish habitat, Cockburn Sound protection, etc.)
+          </li>
+          <li>Offers sufficient water flow for safe dispersion of residuals</li>
+        </ul>
+        Areas shown in the "Potential Cleaning Zones" layer represent parts of the study area that do not intersect with
+        restricted zones and are only in water areas.
+        <p><em>Click anywhere on the map to analyze a potential cleaning location.</em></p>
+        <div class="action-buttons">
+          <button id="forceClearCalculation" class="btn btn-danger">Clear Cache</button>
+          <button id="updateData" class="btn btn-success">Update Data</button>
+        </div>
+      </div>
     <div class="constraint-group">
       <h4>Jurisdictional</h4>
       <div class="layer-control layer-control-loading">
@@ -661,6 +669,7 @@
     <div id="serverStatus">
       <span class="status-dot status-connecting"></span>
       <span id="statusText">Connecting to server...</span>
+    </div>
     </div>
   </div>
 
@@ -788,7 +797,7 @@
         progressInterval = setInterval(() => {
           const elapsedSeconds = Math.floor((Date.now() - loadingStartTime) / 1000);
           document.getElementById('loadingSubMessage').textContent =
-            `This map is running on a free server which may take up to 60 seconds to wake up. (${elapsedSeconds}s elapsed)`;
+            `Loading GIS data... (${elapsedSeconds}s elapsed)`;
         }, 1000);
 
         const serverAvailable = await checkServerStatus();
@@ -1026,6 +1035,36 @@
         }
       }
       window.location.reload();
+    });
+
+    // Sidebar toggle functionality
+    document.getElementById('sidebarToggle').addEventListener('click', function() {
+      const sidebar = document.getElementById('sidebar');
+      sidebar.classList.toggle('collapsed');
+    });
+
+    // Update data button
+    document.getElementById('updateData').addEventListener('click', async function() {
+      if (!serverOnline) {
+        showError('Server is offline. Cannot update data.');
+        return;
+      }
+      
+      document.getElementById('loadingOverlay').style.display = 'flex';
+      document.getElementById('loadingMessage').textContent = 'Updating GIS data...';
+      
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/dataStatus`);
+        if (response.ok) {
+          showSuccessMessage('Data update initiated. Please check server logs for progress.');
+          setTimeout(() => window.location.reload(), 3000);
+        } else {
+          throw new Error('Failed to initiate data update');
+        }
+      } catch (error) {
+        showError('Failed to update data: ' + error.message);
+        document.getElementById('loadingOverlay').style.display = 'none';
+      }
     });
 
     function createNavigationAidsLayer() {
@@ -1520,15 +1559,15 @@
       }
     }
 
-    function updateLoadingMessage(message, showProgress = true) {
-      const loadingMsg = document.getElementById('loadingMessage');
-      loadingMsg.textContent = message;
-      if (showProgress) {
-        const elapsedSeconds = Math.floor((Date.now() - loadingStartTime) / 1000);
-        document.getElementById('loadingSubMessage').textContent =
-          `This map is running on a free server which may take up to 60 seconds to wake up. (${elapsedSeconds}s elapsed)`;
+          function updateLoadingMessage(message, showProgress = true) {
+        const loadingMsg = document.getElementById('loadingMessage');
+        loadingMsg.textContent = message;
+        if (showProgress) {
+          const elapsedSeconds = Math.floor((Date.now() - loadingStartTime) / 1000);
+          document.getElementById('loadingSubMessage').textContent =
+            `Loading GIS data... (${elapsedSeconds}s elapsed)`;
+        }
       }
-    }
 
     async function checkServerStatus() {
       try {
@@ -1551,16 +1590,16 @@
       }
     }
 
-    async function wakeupServer() {
-      if (serverWakeupAttempts >= MAX_WAKEUP_ATTEMPTS) {
-        console.warn(`Max server wakeup attempts (${MAX_WAKEUP_ATTEMPTS}) reached, falling back to local data`);
-        updateServerStatus('offline', 'Server unavailable - using offline mode');
-        return false;
-      }
-      try {
-        serverWakeupAttempts++;
-        updateServerStatus('connecting', `Waking up server (attempt ${serverWakeupAttempts}/${MAX_WAKEUP_ATTEMPTS})...`);
-        updateLoadingMessage(`Waking up server (attempt ${serverWakeupAttempts}/${MAX_WAKEUP_ATTEMPTS})...`);
+          async function wakeupServer() {
+        if (serverWakeupAttempts >= MAX_WAKEUP_ATTEMPTS) {
+          console.warn(`Max server connection attempts (${MAX_WAKEUP_ATTEMPTS}) reached`);
+          updateServerStatus('offline', 'Server unavailable - using offline mode');
+          return false;
+        }
+        try {
+          serverWakeupAttempts++;
+          updateServerStatus('connecting', `Connecting to server (attempt ${serverWakeupAttempts}/${MAX_WAKEUP_ATTEMPTS})...`);
+          updateLoadingMessage(`Connecting to server (attempt ${serverWakeupAttempts}/${MAX_WAKEUP_ATTEMPTS})...`);
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 30000);
         const response = await fetch(`${apiBaseUrl}/warmup`, { signal: controller.signal, headers: { 'Cache-Control': 'no-cache' } });
