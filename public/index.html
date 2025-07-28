@@ -590,7 +590,7 @@
         <label><input type="checkbox" id="marineInfrastructureCheckbox" checked> Marine Infrastructure</label>
       </div>
       <div class="layer-control layer-control-loading">
-        <label><input type="checkbox" id="marineGeomorphicCheckbox" checked> Marine Geomorphic Features</label>
+                        <!-- <label><input type="checkbox" id="marineGeomorphicCheckbox" checked> Marine Geomorphic Features</label> -->
       </div>
     </div>
     <div class="constraint-group">
@@ -770,7 +770,7 @@
 
     const activeLayerKeys = [
       'portAuthorities', 'marineParks', 'fishHabitat', 'cockburnSound', 'mooringAreas',
-      'marineInfrastructure', 'marineGeomorphic', 'marineMultibeam', 'recommendedZones'
+              'marineInfrastructure', 'marineMultibeam', 'recommendedZones'
     ];
 
     const govLayers = {
@@ -780,7 +780,7 @@
       cockburnSound: { url: `/api/cockburnSound`, style: { color: '#2196F3', weight: 2, opacity: 0.8, fillOpacity: 0.2 }, layer: null },
       mooringAreas: { url: `/api/mooringAreas`, style: { color: '#9C27B0', weight: 2, opacity: 0.8, fillOpacity: 0.2 }, layer: null },
       marineInfrastructure: { url: `/api/marineInfrastructure`, style: { color: '#795548', weight: 2, opacity: 0.8, fillOpacity: 0.2 }, layer: null },
-      marineGeomorphic: { url: `/api/marineGeomorphic`, style: { color: '#008080', weight: 2, opacity: 0.8, fillOpacity: 0.15 }, layer: null },
+              // marineGeomorphic: { url: `/api/marineGeomorphic`, style: { color: '#008080', weight: 2, opacity: 0.8, fillOpacity: 0.15 }, layer: null },
       marineMultibeam: { url: `/api/marineMultibeam`, style: { color: '#006400', weight: 2, opacity: 0.8, fillOpacity: 0.2 }, layer: null },
       recommendedZones: { url: `/api/recommendedZones`, style: { color: '#673AB7', weight: 2, opacity: 0.8, fillOpacity: 0.2 }, layer: null }
     };
@@ -788,7 +788,7 @@
     const layerColors = {
       portAuthorities: '#FF4081', marineParks: '#4CAF50', fishHabitat: '#FF9800',
       cockburnSound: '#2196F3', mooringAreas: '#9C27B0', marineInfrastructure: '#795548',
-      marineGeomorphic: '#008080', marineMultibeam: '#006400', recommendedZones: '#673AB7'
+              marineMultibeam: '#006400', recommendedZones: '#673AB7'
     };
 
     async function initMap() {

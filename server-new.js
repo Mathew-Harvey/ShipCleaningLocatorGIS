@@ -183,7 +183,6 @@ const endpoints = [
   'cockburnSound',
   'mooringAreas',
   'marineInfrastructure',
-  'marineGeomorphic',
   'ausMarineParks',
   'osmHarbours',
   'osmMarinas'
@@ -374,6 +373,13 @@ app.get('/', (req, res) => {
 
 // Perform zone calculation
 async function performZoneCalculation() {
+  // Add timeout to prevent hanging
+  const timeout = setTimeout(() => {
+    console.error('Zone calculation timed out after 10 minutes');
+    zoneCalculationStatus.inProgress = false;
+    zoneCalculationStatus.error = 'Calculation timed out after 10 minutes';
+  }, 10 * 60 * 1000); // 10 minutes timeout
+  
   try {
     console.log('Starting zone calculation...');
     
@@ -390,12 +396,14 @@ async function performZoneCalculation() {
       }
     });
     
+    clearTimeout(timeout);
     zoneCalculationStatus.inProgress = false;
     zoneCalculationStatus.lastCompleted = new Date().toISOString();
     zoneCalculationStatus.progress = 100;
     
     console.log('Zone calculation completed successfully');
   } catch (error) {
+    clearTimeout(timeout);
     console.error('Zone calculation failed:', error);
     zoneCalculationStatus.inProgress = false;
     zoneCalculationStatus.error = error.message;

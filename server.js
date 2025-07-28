@@ -246,7 +246,7 @@ const ENDPOINTS = {
   mooringAreas: "https://services.slip.wa.gov.au/public/rest/services/Landgate_Public_Maps/Marine_Map_WA_3/MapServer/15/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
   marineInfrastructure: "https://services.slip.wa.gov.au/public/rest/services/Landgate_Public_Maps/Marine_Map_WA_3/MapServer/18/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
   bathymetry: "https://services.ga.gov.au/gis/rest/services/Australian_Bathymetry_Topography/MapServer/WMSServer?request=GetMap&service=WMS&version=1.3.0&layers=0&styles=&format=application/json;type=geojson&bbox=115.2,-32.60,116.0,-30.90&width=1024&height=1024&crs=EPSG:4326",
-  marineGeomorphic: "https://services.ga.gov.au/gis/rest/services/Geomorphic_Features_Australia_Marine_Jurisdiction/MapServer/WMSServer?request=GetMap&service=WMS&version=1.3.0&layers=0&styles=&format=application/json;type=geojson&bbox=115.2,-32.60,116.0,-30.90&width=1024&height=1024&crs=EPSG:4326",
+  // marineGeomorphic: "https://services.ga.gov.au/gis/rest/services/Geomorphic_Features_Australia_Marine_Jurisdiction/MapServer/WMSServer?request=GetMap&service=WMS&version=1.3.0&layers=0&styles=&format=application/json;type=geojson&bbox=115.2,-32.60,116.0,-30.90&width=1024&height=1024&crs=EPSG:4326",
   marineMultibeam: "https://services.ga.gov.au/gis/rest/services/Marine_Survey_Multibeam_Bathymetry/MapServer/WMSServer?request=GetMap&service=WMS&version=1.3.0&layers=0&styles=&format=application/json;type=geojson&bbox=115.2,-32.60,116.0,-30.90&width=1024&height=1024&crs=EPSG:4326"
 };
 
@@ -1550,7 +1550,7 @@ app.post('/api/analyzeProximity', async (req, res) => {
         cockburnSound: ENDPOINTS.cockburnSound,
         mooringAreas: ENDPOINTS.mooringAreas,
         marineInfrastructure: ENDPOINTS.marineInfrastructure,
-        marineGeomorphic: ENDPOINTS.marineGeomorphic
+        // marineGeomorphic: ENDPOINTS.marineGeomorphic
       };
 
       for (const [key, url] of Object.entries(endpoints)) {
@@ -1849,7 +1849,7 @@ app.get('/', (req, res) => {
       '/api/mooringAreas',
       '/api/marineInfrastructure',
       '/api/bathymetry',
-      '/api/marineGeomorphic',
+      // '/api/marineGeomorphic',
       '/api/marineMultibeam',
       '/api/recommendedZones',
       '/api/constraintData',

@@ -73,7 +73,14 @@ class DataManager {
         url: "https://www.gebco.net/data_and_products/gebco_web_services/web_map_service/mapserv?request=getfeature&service=wfs&version=2.0.0&typenames=gebco:gebco_2023_contours&outputformat=application/json&bbox=115.2,-32.6,116.0,-30.9,EPSG:4326",
         description: "GEBCO Bathymetry Contours",
         priority: 3
-      }
+      },
+      
+      // Marine Geomorphic Features (commented out due to API issues)
+      // marineGeomorphic: {
+      //   url: "https://services.ga.gov.au/gis/rest/services/Geomorphic_Features_Australia_Marine_Jurisdiction/MapServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson&geometry=%7B%22xmin%22%3A115.2%2C%22ymin%22%3A-32.6%2C%22xmax%22%3A116.0%2C%22ymax%22%3A-30.9%2C%22spatialReference%22%3A%7B%22wkid%22%3A4326%7D%7D&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects",
+      //   description: "Marine Geomorphic Features",
+      //   priority: 2
+      // }
     };
   }
 

@@ -7,8 +7,8 @@ class ZoneCalculator {
   constructor(options = {}) {
     this.zonesDir = options.zonesDir || path.join(__dirname, 'calculated_zones');
     this.cacheDir = options.cacheDir || path.join(__dirname, 'zone_cache');
-    this.gridResolution = options.gridResolution || 0.005; // ~500m grid
-    this.bufferSize = options.bufferSize || 0.001; // ~100m buffer
+    this.gridResolution = options.gridResolution || 0.01; // ~1km grid (increased for faster calculation)
+    this.bufferSize = options.bufferSize || 0.002; // ~200m buffer (increased for better coverage)
   }
 
   async initialize() {
@@ -21,6 +21,11 @@ class ZoneCalculator {
     const startTime = Date.now();
     const progressCallback = options.progressCallback || (() => {});
     
+    // Add timeout to prevent hanging
+    const timeout = setTimeout(() => {
+      throw new Error('Zone calculation timed out after 5 minutes');
+    }, 5 * 60 * 1000); // 5 minutes timeout
+    
     try {
       // Generate a hash of the input constraints to check cache
       const constraintHash = this.generateConstraintHash(constraintData);
@@ -31,6 +36,7 @@ class ZoneCalculator {
       if (cachedResult && !options.forceRecalculate) {
         console.log('Using cached zone calculation');
         progressCallback(100, 'Using cached results');
+        clearTimeout(timeout);
         return cachedResult;
       }
 
@@ -112,9 +118,11 @@ class ZoneCalculator {
       progressCallback(100, 'Calculation complete');
       console.log(`Zone calculation completed in ${Date.now() - startTime}ms`);
       
+      clearTimeout(timeout);
       return result;
     } catch (error) {
       console.error('Zone calculation failed:', error);
+      clearTimeout(timeout);
       throw error;
     }
   }
@@ -215,7 +223,8 @@ class ZoneCalculator {
     
     // Create buffers around points
     const buffers = [];
-    const batchSize = 100;
+    const batchSize = 500; // Increased batch size for better performance
+    const progressInterval = Math.max(1, Math.floor(points.length / 20)); // Update progress every 5%
     
     for (let i = 0; i < points.length; i += batchSize) {
       const batch = points.slice(i, Math.min(i + batchSize, points.length));
@@ -224,8 +233,11 @@ class ZoneCalculator {
       );
       buffers.push(...batchBuffers);
       
-      const progress = 70 + Math.floor((i / points.length) * 10);
-      progressCallback(progress, `Creating zones (${i}/${points.length} points processed)`);
+      // Only update progress every few batches to reduce overhead
+      if (i % (batchSize * progressInterval) === 0 || i + batchSize >= points.length) {
+        const progress = 70 + Math.floor((i / points.length) * 10);
+        progressCallback(progress, `Creating zones (${i}/${points.length} points processed)`);
+      }
     }
     
     // Merge nearby buffers using clustering
@@ -248,34 +260,50 @@ class ZoneCalculator {
   }
 
   clusterPolygons(polygons, maxDistance = 0.001) {
+    if (polygons.length === 0) return [];
+    if (polygons.length === 1) return [polygons];
+    
     const clusters = [];
     const processed = new Set();
     
-    for (let i = 0; i < polygons.length; i++) {
+    // Limit the number of polygons to process to prevent hanging
+    const maxPolygons = 1000;
+    const polygonsToProcess = polygons.slice(0, maxPolygons);
+    
+    for (let i = 0; i < polygonsToProcess.length; i++) {
       if (processed.has(i)) continue;
       
-      const cluster = [polygons[i]];
+      const cluster = [polygonsToProcess[i]];
       processed.add(i);
       
       // Find all polygons that should be in this cluster
       const queue = [i];
+      let clusterSize = 0;
+      const maxClusterSize = 50; // Limit cluster size to prevent infinite loops
       
-      while (queue.length > 0) {
+      while (queue.length > 0 && clusterSize < maxClusterSize) {
         const current = queue.shift();
+        clusterSize++;
         
-        for (let j = 0; j < polygons.length; j++) {
-          if (processed.has(j)) continue;
+        for (let j = 0; j < polygonsToProcess.length; j++) {
+          if (processed.has(j) || clusterSize >= maxClusterSize) continue;
           
-          // Check if polygons are close enough
-          const distance = turf.distance(
-            turf.centroid(polygons[current]), 
-            turf.centroid(polygons[j])
-          );
-          
-          if (distance <= maxDistance || turf.booleanOverlap(polygons[current], polygons[j])) {
-            cluster.push(polygons[j]);
-            processed.add(j);
-            queue.push(j);
+          try {
+            // Check if polygons are close enough
+            const distance = turf.distance(
+              turf.centroid(polygonsToProcess[current]), 
+              turf.centroid(polygonsToProcess[j])
+            );
+            
+            if (distance <= maxDistance) {
+              cluster.push(polygonsToProcess[j]);
+              processed.add(j);
+              queue.push(j);
+              clusterSize++;
+            }
+          } catch (error) {
+            // Skip problematic polygons
+            console.warn('Error processing polygon for clustering:', error);
           }
         }
       }
@@ -436,7 +464,6 @@ class ZoneCalculator {
       'cockburnSound',
       'mooringAreas',
       'marineInfrastructure',
-      'marineGeomorphic',
       'ausMarineParks',
       'osmHarbours',
       'osmMarinas'
